@@ -1,0 +1,2 @@
+[gui_scripts]
+dikas = dikas.app:main

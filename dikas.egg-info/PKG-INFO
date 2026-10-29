@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: dikas
+Version: 0.1.0
+Summary: Lokales Rechnungs- und Kassensystem für den Verein
+Requires-Python: >=3.15
+Requires-Dist: PySide6>=6.12
+Requires-Dist: SQLAlchemy>=2.1
+Provides-Extra: dev
+Requires-Dist: pytest>=9; extra == "dev"

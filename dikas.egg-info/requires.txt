@@ -1,0 +1,5 @@
+PySide6>=6.12
+SQLAlchemy>=2.1
+
+[dev]
+pytest>=9
