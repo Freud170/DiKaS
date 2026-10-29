@@ -12,6 +12,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus
+from dikas.geld import cent_zu_text
 
 
 class BuchhaltungsFehler(ValueError):
@@ -60,8 +61,12 @@ def _pruefe_name(session: Session, name: str, typ: KontoTyp, ausser_id: int | No
     abfrage = select(Konto).where(Konto.typ == typ, Konto.name == name)
     if ausser_id is not None:
         abfrage = abfrage.where(Konto.id != ausser_id)
-    if session.scalar(abfrage) is not None:
-        raise BuchhaltungsFehler(f"Es gibt bereits ein {typ.anzeige} mit dem Namen „{name}“.")
+    vorhanden = session.scalar(abfrage)
+    if vorhanden is not None:
+        hinweis = " (gelöscht – ggf. wiederherstellen)" if vorhanden.geloescht else ""
+        raise BuchhaltungsFehler(
+            f"Es gibt bereits ein {typ.anzeige} mit dem Namen „{name}“{hinweis}."
+        )
     return name
 
 
@@ -97,9 +102,9 @@ def konto_bearbeiten(
     bemerkung: str,
     aktiv: bool,
 ) -> Konto:
-    konto = session.get(Konto, konto_id)
-    if konto is None:
-        raise BuchhaltungsFehler(f"Konto {konto_id} existiert nicht.")
+    konto = _konto(session, konto_id)
+    if konto.geloescht:
+        raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen.")
     if konto.typ == KontoTyp.KW and not aktiv:
         raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
     konto.name = _pruefe_name(session, name, konto.typ, ausser_id=konto.id)
@@ -111,12 +116,64 @@ def konto_bearbeiten(
     return konto
 
 
-# --- Buchungen ------------------------------------------------------------
-
-def _aktives_konto(session: Session, konto_id: int, erlaubt: tuple[KontoTyp, ...], rolle: str) -> Konto:
+def _konto(session: Session, konto_id: int) -> Konto:
     konto = session.get(Konto, konto_id)
     if konto is None:
         raise BuchhaltungsFehler(f"Konto {konto_id} existiert nicht.")
+    return konto
+
+
+def hat_buchungen(session: Session, konto_id: int) -> bool:
+    return session.scalar(
+        select(Buchung.id)
+        .where(or_(Buchung.soll_konto_id == konto_id, Buchung.haben_konto_id == konto_id))
+        .limit(1)
+    ) is not None
+
+
+def konto_loeschen(session: Session, konto_id: int) -> bool:
+    """Löscht ein Privatkonto mit Saldo 0.
+
+    Ohne Buchungen wird es wirklich entfernt (Rückgabe True). Mit Buchungen wird es
+    nur als gelöscht markiert (Rückgabe False), damit die Historie stimmig bleibt.
+    """
+    konto = _konto(session, konto_id)
+    if konto.typ != KontoTyp.PRIVAT:
+        raise BuchhaltungsFehler("Nur Privatkonten können gelöscht werden.")
+    if konto.geloescht:
+        raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist bereits gelöscht.")
+    stand = saldo(session, konto.id)
+    if stand != 0:
+        raise BuchhaltungsFehler(
+            f"Konto „{konto.name}“ kann nur bei Saldo 0 gelöscht werden "
+            f"(aktuell {cent_zu_text(stand)})."
+        )
+    if not hat_buchungen(session, konto.id):
+        session.delete(konto)
+        session.flush()
+        return True
+    konto.geloescht = True
+    konto.aktiv = False
+    session.flush()
+    return False
+
+
+def konto_wiederherstellen(session: Session, konto_id: int) -> Konto:
+    konto = _konto(session, konto_id)
+    if not konto.geloescht:
+        raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist nicht gelöscht.")
+    konto.geloescht = False
+    konto.aktiv = True
+    session.flush()
+    return konto
+
+
+# --- Buchungen ------------------------------------------------------------
+
+def _aktives_konto(session: Session, konto_id: int, erlaubt: tuple[KontoTyp, ...], rolle: str) -> Konto:
+    konto = _konto(session, konto_id)
+    if konto.geloescht:
+        raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht.")
     if konto.typ not in erlaubt:
         erlaubt_text = " oder ".join(t.anzeige for t in erlaubt)
         raise BuchhaltungsFehler(f"{rolle}: „{konto.name}“ ist kein {erlaubt_text}.")
@@ -183,6 +240,12 @@ def stornieren(session: Session, buchung_id: int, datum: date | None = None) -> 
         raise BuchhaltungsFehler("Eine Stornobuchung kann nicht storniert werden.")
     if original.ist_storniert:
         raise BuchhaltungsFehler("Diese Buchung wurde bereits storniert.")
+    # Sonst stünde ein gelöschtes (unsichtbares) Konto plötzlich nicht mehr auf 0
+    for konto in (original.soll_konto, original.haben_konto):
+        if konto.geloescht:
+            raise BuchhaltungsFehler(
+                f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen."
+            )
 
     storno = Buchung(
         datum=datum or date.today(),
@@ -225,7 +288,7 @@ def beitrag_vorschau(
     """Alle aktiven Mitglieder, die nach `betraege` (Cent je Status) etwas zahlen."""
     mitglieder = session.scalars(
         select(Konto)
-        .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv)
+        .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv, ~Konto.geloescht)
         .order_by(Konto.status, Konto.name)
     )
     return [(m, betraege.get(m.status, 0)) for m in mitglieder if betraege.get(m.status, 0) > 0]

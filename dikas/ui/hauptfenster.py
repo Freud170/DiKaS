@@ -27,15 +27,17 @@ ALLE_BUCHUNGEN = None  # Auswahl "kein Konto" -> alle Buchungen anzeigen
 GRAU = QColor("#888888")
 ROT = QColor("#c0392b")
 
-# Filter für die Kontenliste: Beschriftung -> Prüffunktion
+# Filter für die Kontenliste: Beschriftung -> Prüffunktion.
+# Gelöschte Konten erscheinen nur unter "Gelöschte".
 KONTEN_FILTER = {
-    "Alle Konten": lambda k: True,
-    "Privatkonten": lambda k: k.typ == KontoTyp.PRIVAT,
+    "Alle Konten": lambda k: not k.geloescht,
+    "Privatkonten": lambda k: not k.geloescht and k.typ == KontoTyp.PRIVAT,
     **{
-        status.mehrzahl: (lambda k, s=status: k.status == s)
+        status.mehrzahl: (lambda k, s=status: not k.geloescht and k.status == s)
         for status in MitgliedStatus
     },
-    "Kassen": lambda k: k.typ == KontoTyp.KASSE,
+    "Kassen": lambda k: not k.geloescht and k.typ == KontoTyp.KASSE,
+    "Gelöschte": lambda k: k.geloescht,
 }
 
 
@@ -110,6 +112,8 @@ class Hauptfenster(QMainWindow):
         for text, kuerzel, slot in (
             ("Neues Konto", "Ctrl+K", self.neues_konto),
             ("Konto bearbeiten", None, self.konto_bearbeiten),
+            ("Konto löschen", None, self.konto_loeschen),
+            ("Wiederherstellen", None, self.konto_wiederherstellen),
             ("Neue Buchung", "Ctrl+N", self.neue_buchung),
             ("Beiträge abbuchen", None, self.beitraege_abbuchen),
             ("Stornieren", None, self.storniere_auswahl),
@@ -153,7 +157,7 @@ class Hauptfenster(QMainWindow):
                 _betrag_zelle(salden[konto.id]),
             ]
             for spalte, item in enumerate(werte):
-                if not konto.aktiv:
+                if not konto.aktiv or konto.geloescht:
                     item.setForeground(GRAU)
                 self.konten_tabelle.setItem(zeile, spalte, item)
             if konto.id == gewaehlt:
@@ -218,12 +222,10 @@ class Hauptfenster(QMainWindow):
         )
 
     def konto_bearbeiten(self):
-        konto_id = self._gewaehltes_konto_id()
-        if konto_id is ALLE_BUCHUNGEN:
-            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein Konto auswählen.")
+        konto = self._gewaehltes_konto()
+        if konto is None:
             return
-        with self.Session() as session:
-            konto = session.get(Konto, konto_id)
+        konto_id = konto.id
         dialog = KontoDialog(self, konto)
         if dialog.exec() != KontoDialog.Accepted:
             return
@@ -233,6 +235,39 @@ class Hauptfenster(QMainWindow):
                 s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"]
             )
         )
+
+    def _gewaehltes_konto(self) -> Konto | None:
+        konto_id = self._gewaehltes_konto_id()
+        if konto_id is ALLE_BUCHUNGEN:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst ein Konto auswählen.")
+            return None
+        with self.Session() as session:
+            return session.get(Konto, konto_id)
+
+    def konto_loeschen(self):
+        konto = self._gewaehltes_konto()
+        if konto is None:
+            return
+        antwort = QMessageBox.question(
+            self,
+            "Konto löschen",
+            f"Konto „{konto.name}“ löschen?\n\n"
+            "Hat das Konto Buchungen, bleibt es im Hintergrund erhalten und kann "
+            "über den Filter „Gelöschte“ wiederhergestellt werden.",
+        )
+        if antwort != QMessageBox.Yes:
+            return
+        ergebnis = {}
+        if self._ausfuehren(lambda s: ergebnis.update(entfernt=buchhaltung.konto_loeschen(s, konto.id))):
+            art = "entfernt" if ergebnis["entfernt"] else "gelöscht (Buchungen bleiben erhalten)"
+            self.statusBar().showMessage(f"Konto „{konto.name}“ {art}.", 5000)
+
+    def konto_wiederherstellen(self):
+        konto = self._gewaehltes_konto()
+        if konto is None:
+            return
+        if self._ausfuehren(lambda s: buchhaltung.konto_wiederherstellen(s, konto.id)):
+            self.statusBar().showMessage(f"Konto „{konto.name}“ wiederhergestellt.", 5000)
 
     def neue_buchung(self):
         with self.Session() as session:

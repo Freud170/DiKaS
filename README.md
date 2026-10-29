@@ -40,7 +40,12 @@ Beitragsbuchung angelegt. Bei einem Fehler wird gar nichts gebucht.
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
 - Beträge werden in Cent (Ganzzahl) gespeichert.
 - Buchungen werden nie gelöscht, sondern **storniert** (automatische Gegenbuchung).
-- Konten werden nicht gelöscht, sondern deaktiviert.
+- **Deaktivieren** (Konto bearbeiten): z. B. ausgetreten, aber noch sichtbar, keine neuen Buchungen.
+- **Löschen** geht nur bei Privatkonten mit **Saldo 0**:
+  - ohne Buchungen → Konto wird wirklich entfernt
+  - mit Buchungen → Konto wird als gelöscht markiert und ausgeblendet; die Buchungen
+    bleiben in der Historie. Über den Filter „Gelöschte“ + „Wiederherstellen“ zurückholbar.
+  - Buchungen eines gelöschten Kontos können erst nach dem Wiederherstellen storniert werden.
 
 ## Technik
 
@@ -72,6 +77,18 @@ Zum Sichern oder Weitergeben einfach diese Datei kopieren.
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
 ```
+
+| Datei | Inhalt |
+|---|---|
+| `test_buchhaltung.py` | Grundregeln: Konten, Buchungsarten, Storno, Beitragslauf |
+| `test_szenarien.py` | Vereinsalltag: Beiträge, Raten, Überzahlung, Strichliste, Auslagen, Feste, Spenden, Korrekturen, Austritt, ein komplettes Vereinsjahr |
+| `test_robustheit.py` | Transaktionen (alles oder nichts), Speichern/Neustart, DB-Regeln, Zufallsabläufe, große Mengen, Rundung |
+| `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
+| `test_geld.py` | Betragseingabe und -anzeige |
+| `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
+
+`tests/conftest.py` enthält die Hilfsklasse `Verein`, mit der sich Abläufe lesbar in Euro
+schreiben lassen (`verein.einzahlung(tom, "12,50")`).
 
 ## Projektstruktur
 

@@ -89,6 +89,8 @@ class Konto(Base):
         Enum(MitgliedStatus, native_enum=False, length=10), default=None
     )
     aktiv: Mapped[bool] = mapped_column(default=True)
+    # Archiviert: Saldo war 0, Konto hat aber Buchungen und bleibt deshalb erhalten
+    geloescht: Mapped[bool] = mapped_column(default=False)
     bemerkung: Mapped[str] = mapped_column(String(500), default="")
     erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
 
