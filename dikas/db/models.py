@@ -45,14 +45,27 @@ class MitgliedStatus(enum.StrEnum):
     FUX = "FUX"
     AKTIVER = "AKTIVER"
     ALUMNI = "ALUMNI"
+    FOERDER = "FOERDER"  # Fördermitglied (FM)
+    EHREN = "EHREN"  # Ehrenmitglied (EM)
 
     @property
     def anzeige(self) -> str:
-        return {"FUX": "Fux", "AKTIVER": "Aktiver", "ALUMNI": "Alumni"}[self.value]
+        return {
+            "FUX": "Fux", "AKTIVER": "Aktiver", "ALUMNI": "Alumni",
+            "FOERDER": "Fördermitglied (FM)", "EHREN": "Ehrenmitglied (EM)",
+        }[self.value]
 
     @property
     def mehrzahl(self) -> str:
-        return {"FUX": "Füxe", "AKTIVER": "Aktive", "ALUMNI": "Alumni"}[self.value]
+        return {
+            "FUX": "Füxe", "AKTIVER": "Aktive", "ALUMNI": "Alumni",
+            "FOERDER": "Fördermitglieder", "EHREN": "Ehrenmitglieder",
+        }[self.value]
+
+    @property
+    def naechster(self) -> "MitgliedStatus":
+        """Üblicher nächster Status im Vereinsleben (Fux → Aktiver → Alumni), sonst unverändert."""
+        return {"FUX": MitgliedStatus.AKTIVER, "AKTIVER": MitgliedStatus.ALUMNI}.get(self.value, self)
 
 
 class Buchungsart(enum.StrEnum):

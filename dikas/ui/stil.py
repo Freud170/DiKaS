@@ -122,14 +122,14 @@ QHeaderView::section {{
 }}
 
 /* Eingabefelder */
-QLineEdit, QComboBox, QDateEdit, QSpinBox {{
+QLineEdit, QComboBox, QDateEdit {{
     background: {FLAECHE};
     border: 1px solid #cfd5dd;
     border-radius: 6px;
     padding: 5px 8px;
     min-height: 20px;
 }}
-QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QSpinBox:focus {{
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{
     border: 1px solid {AKZENT};
 }}
 QComboBox::drop-down, QDateEdit::drop-down {{
@@ -204,6 +204,23 @@ QCheckBox::indicator:hover {{
     border-color: {AKZENT};
 }}
 QCheckBox::indicator:checked {{
+    background: {AKZENT};
+    border-color: {AKZENT};
+    image: url({HAKEN});
+}}
+
+/* Kontrollkästchen in Tabellen (Auswahl im Beitragslauf und beim Mailversand) */
+QTableWidget::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid #b7c0cb;
+    border-radius: 4px;
+    background: {FLAECHE};
+}}
+QTableWidget::indicator:hover {{
+    border-color: {AKZENT};
+}}
+QTableWidget::indicator:checked {{
     background: {AKZENT};
     border-color: {AKZENT};
     image: url({HAKEN});

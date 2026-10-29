@@ -4,6 +4,7 @@ from datetime import date
 from typing import Callable
 
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -19,7 +20,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QSpinBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -29,6 +29,7 @@ from dikas.buchhaltung import EMAIL_MUSTER, REGELN, BeitragVorschau, status_am
 from dikas.db.models import Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text, text_zu_cent
 from dikas.ui import stil
+from dikas.ui.bausteine import JahrAuswahl
 
 
 def _knoepfe(dialog: QDialog, bei_ok: Callable[[], None]) -> QDialogButtonBox:
@@ -104,10 +105,8 @@ class StatusverlaufEditor(QWidget):
 
     def neuer_wechsel(self):
         """Neue Zeile mit dem nächsten Status (Fux → Aktiver → Alumni) ab heute."""
-        reihenfolge = list(MitgliedStatus)
         letzter = self.werte()[-1][0] if self.tabelle.rowCount() else MitgliedStatus.FUX
-        naechster = reihenfolge[min(reihenfolge.index(letzter) + 1, len(reihenfolge) - 1)]
-        self._zeile(naechster, date.today())
+        self._zeile(MitgliedStatus(letzter).naechster, date.today())
         self.tabelle.selectRow(self.tabelle.rowCount() - 1)
         self._knoepfe_aktualisieren()
 
@@ -375,10 +374,7 @@ class BeitragDialog(QDialog):
 
         form = stil.formular(QFormLayout())
         form.setContentsMargins(0, 0, 0, 0)
-        self.jahr = QSpinBox()
-        self.jahr.setRange(1950, heute.year + 1)
-        self.jahr.setButtonSymbols(QSpinBox.NoButtons)  # Jahr tippen oder mit Mausrad/Pfeiltasten ändern
-        self.jahr.setValue(heute.year)
+        self.jahr = JahrAuswahl(1950, heute.year + 1, heute.year)
         form.addRow("Beitragsjahr:", self.jahr)
         self.felder: dict[MitgliedStatus, QLineEdit] = {}
         for status in MitgliedStatus:
@@ -396,9 +392,12 @@ class BeitragDialog(QDialog):
         self.text = QLineEdit()
         form.addRow("Buchungstext:", self.text)
 
-        self.tabelle = stil.tabelle(["Mitglied", "Status", "Eintritt", "Beitrag"], rechts=[3])
+        # Vorschau mit Häkchen: fällige sind angehakt, später Eingetretene / ohne Eintrittsdatum
+        # können dazugenommen werden, bereits Abgebuchte sind gesperrt.
+        self.tabelle = stil.tabelle(["", "Mitglied", "Status", "Eintritt", "Beitrag", "Hinweis"], rechts=[4])
         self.tabelle.setSelectionMode(QAbstractItemView.NoSelection)
-        self.tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tabelle.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tabelle.itemChanged.connect(self._haken_geaendert)
         self.summe = QLabel()
         self.ausgelassen = QLabel()
         self.ausgelassen.setObjectName("hinweis")
@@ -423,9 +422,11 @@ class BeitragDialog(QDialog):
         layout.addWidget(_knoepfe(self, self._pruefen))
 
         self._letzter_standardtext = ""
+        self._von_hand: dict[int, bool] = {}  # Häkchen, die von Hand gesetzt/entfernt wurden
+        self._zeilen: list[tuple[Konto, int]] = []  # (Mitglied, Betrag) je Tabellenzeile
         self.jahr.valueChanged.connect(self._jahr_geaendert)
         self._jahr_geaendert()
-        self.resize(560, 760)
+        self.resize(680, 820)
 
     def _jahr_geaendert(self):
         """Datum auf den 01.01. setzen; Text nur anpassen, wenn er nicht von Hand geändert wurde."""
@@ -435,6 +436,7 @@ class BeitragDialog(QDialog):
         if self.text.text() in ("", self._letzter_standardtext):
             self.text.setText(standard)
         self._letzter_standardtext = standard
+        self._von_hand.clear()  # Auswahl gilt nur für das jeweilige Jahr
         self._aktualisiere_vorschau()
 
     def _lese_betraege(self) -> dict[MitgliedStatus, int] | None:
@@ -450,33 +452,81 @@ class BeitragDialog(QDialog):
 
     def _aktualisiere_vorschau(self):
         jahr = self.jahr.value()
-        self.vorschau_titel.setText(f"Vorschau – fällig für {jahr}")
+        stichtag = date(jahr, 1, 1)
+        self.vorschau_titel.setText(f"Vorschau – Beitrag {jahr}")
         betraege = self._lese_betraege()
+        t = self.tabelle
+        t.blockSignals(True)
+        t.setRowCount(0)
+        self._zeilen = []
         if betraege is None:
-            self.tabelle.setRowCount(0)
+            t.blockSignals(False)
             self.summe.setText(f"<span style='color:{stil.NEGATIV}'>Ungültiger Betrag</span>")
             self.ausgelassen.clear()
             return
         v = self._vorschau(betraege, jahr)
-        self.tabelle.setRowCount(len(v.faellig))
-        for i, (mitglied, cent) in enumerate(v.faellig):
-            betrag = QTableWidgetItem(cent_zu_text(cent))
+        eintraege = (
+            [(m, True, "") for m, _ in v.faellig]
+            + [(m, False, f"Eintritt nach 01.01.{jahr}") for m in v.spaeter_eingetreten]
+            + [(m, False, "ohne Eintrittsdatum") for m in v.ohne_eintrittsdatum]
+            + [(m, None, f"bereits für {jahr} abgebucht") for m in v.bereits_abgebucht]
+        )
+        for mitglied, vorauswahl, hinweis in eintraege:
+            zeile = t.rowCount()
+            t.insertRow(zeile)
+            haken = QTableWidgetItem()
+            if vorauswahl is None:  # gesperrt
+                haken.setFlags(Qt.ItemIsEnabled)
+            else:
+                haken.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                an = self._von_hand.get(mitglied.id, vorauswahl)
+                haken.setCheckState(Qt.Checked if an else Qt.Unchecked)
+            betrag = QTableWidgetItem(cent_zu_text(v.betrag_je_konto[mitglied.id]))
             betrag.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.tabelle.setItem(i, 0, QTableWidgetItem(mitglied.name))
-            self.tabelle.setItem(i, 1, QTableWidgetItem(status_am(mitglied, date(jahr, 1, 1)).anzeige))
-            self.tabelle.setItem(i, 2, QTableWidgetItem(mitglied.eintrittsdatum.strftime("%d.%m.%Y")))
-            self.tabelle.setItem(i, 3, betrag)
-        anzahl = f"{len(v.faellig)} Mitglied" + ("" if len(v.faellig) == 1 else "er")
-        self.summe.setText(f"{anzahl}, Summe: <b>{cent_zu_text(v.summe)}</b>")
+            eintritt = mitglied.eintrittsdatum.strftime("%d.%m.%Y") if mitglied.eintrittsdatum else "–"
+            items = [
+                haken,
+                QTableWidgetItem(mitglied.name),
+                QTableWidgetItem(status_am(mitglied, stichtag).anzeige),
+                QTableWidgetItem(eintritt),
+                betrag,
+                QTableWidgetItem(hinweis),
+            ]
+            for spalte, item in enumerate(items):
+                if vorauswahl is not True and spalte:
+                    item.setForeground(QColor(stil.INAKTIV))
+                t.setItem(zeile, spalte, item)
+            self._zeilen.append((mitglied, v.betrag_je_konto[mitglied.id]))
+        t.blockSignals(False)
+        self._zeige_summe()
 
         gruende = [
             (f"Bereits für {jahr} abgebucht", v.bereits_abgebucht),
-            (f"Erst nach dem 01.01.{jahr} eingetreten", v.spaeter_eingetreten),
-            ("Ohne Eintrittsdatum (bitte im Konto nachtragen)", v.ohne_eintrittsdatum),
+            (f"Erst nach dem 01.01.{jahr} eingetreten (bei Bedarf anhaken)", v.spaeter_eingetreten),
+            ("Ohne Eintrittsdatum (bei Bedarf anhaken oder im Konto nachtragen)", v.ohne_eintrittsdatum),
         ]
         self.ausgelassen.setText("<br>".join(
             f"<b>{grund}:</b> {', '.join(m.name for m in liste)}" for grund, liste in gruende if liste
         ))
+
+    def _haken_geaendert(self, item: QTableWidgetItem):
+        if item.column() != 0:
+            return
+        mitglied, _ = self._zeilen[item.row()]
+        self._von_hand[mitglied.id] = item.checkState() == Qt.Checked
+        self._zeige_summe()
+
+    def ausgewaehlte(self) -> list[tuple[Konto, int]]:
+        return [
+            self._zeilen[z] for z in range(self.tabelle.rowCount())
+            if self.tabelle.item(z, 0).checkState() == Qt.Checked
+            and self.tabelle.item(z, 0).flags() & Qt.ItemIsUserCheckable
+        ]
+
+    def _zeige_summe(self):
+        auswahl = self.ausgewaehlte()
+        anzahl = f"{len(auswahl)} Mitglied" + ("" if len(auswahl) == 1 else "er")
+        self.summe.setText(f"{anzahl} ausgewählt, Summe: <b>{cent_zu_text(sum(b for _, b in auswahl))}</b>")
 
     def _pruefen(self):
         betraege = self._lese_betraege()
@@ -484,9 +534,12 @@ class BeitragDialog(QDialog):
             QMessageBox.warning(self, "Fehler", "Bitte gültige Beträge eingeben.")
             return
         jahr = self.jahr.value()
-        v = self._vorschau(betraege, jahr)
-        if not v.faellig:
+        if not any(self.tabelle.item(z, 0).flags() & Qt.ItemIsUserCheckable for z in range(self.tabelle.rowCount())):
             QMessageBox.warning(self, "Fehler", f"Es wird für kein Mitglied ein Beitrag {jahr} fällig.")
+            return
+        auswahl = self.ausgewaehlte()
+        if not auswahl:
+            QMessageBox.warning(self, "Fehler", "Bitte mindestens ein Mitglied anhaken.")
             return
         if self.kasse.currentData() is None:
             QMessageBox.warning(self, "Fehler", "Bitte zuerst eine Kasse anlegen.")
@@ -497,8 +550,8 @@ class BeitragDialog(QDialog):
         antwort = QMessageBox.question(
             self,
             "Beiträge abbuchen",
-            f"Beitrag {jahr}: {len(v.faellig)} Buchungen über insgesamt {cent_zu_text(v.summe)} "
-            f"auf „{self.kasse.currentText()}“ anlegen?",
+            f"Beitrag {jahr}: {len(auswahl)} Buchungen über insgesamt "
+            f"{cent_zu_text(sum(b for _, b in auswahl))} auf „{self.kasse.currentText()}“ anlegen?",
         )
         if antwort != QMessageBox.Yes:
             return
@@ -512,4 +565,5 @@ class BeitragDialog(QDialog):
             "kasse_id": self.kasse.currentData(),
             "text": self.text.text(),
             "datum": self.datum.date().toPython(),
+            "konto_ids": [m.id for m, _ in self.ausgewaehlte()],
         }

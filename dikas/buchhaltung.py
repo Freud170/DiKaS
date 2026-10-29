@@ -6,7 +6,8 @@ Wirkung auf den Saldo siehe `dikas.db.models`.
 """
 
 import re
-from dataclasses import dataclass
+from collections.abc import Collection
+from dataclasses import dataclass, field
 from datetime import date
 
 from sqlalchemy import func, or_, select
@@ -442,10 +443,16 @@ class BeitragVorschau:
     bereits_abgebucht: list[Konto]  # hat für das Jahr schon einen (nicht stornierten) Beitrag
     spaeter_eingetreten: list[Konto]  # Eintritt nach dem 01.01. des Jahres
     ohne_eintrittsdatum: list[Konto]
+    betrag_je_konto: dict[int, int] = field(default_factory=dict)  # für alle oben genannten
 
     @property
     def summe(self) -> int:
         return sum(betrag for _, betrag in self.faellig)
+
+    @property
+    def zusaetzlich_waehlbar(self) -> list[Konto]:
+        """Nicht automatisch fällig, können aber von Hand dazugenommen werden."""
+        return self.spaeter_eingetreten + self.ohne_eintrittsdatum
 
 
 def _schon_abgebucht(session: Session, jahr: int) -> set[int]:
@@ -469,22 +476,24 @@ def beitrag_vorschau(
     mitglieder = session.scalars(
         select(Konto)
         .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv, ~Konto.geloescht)
-        .order_by(Konto.status, Konto.name)
+        .order_by(Konto.status, Konto.nachname, Konto.vorname)
     )
     faellig, bereits, spaeter, ohne_datum = [], [], [], []
+    betrag_je_konto = {}
     for m in mitglieder:
         betrag = betraege.get(status_am(m, stichtag), 0)
         if betrag <= 0:
             continue
-        if m.eintrittsdatum is None:
+        betrag_je_konto[m.id] = betrag
+        if m.id in schon:
+            bereits.append(m)
+        elif m.eintrittsdatum is None:
             ohne_datum.append(m)
         elif m.eintrittsdatum > stichtag:
             spaeter.append(m)
-        elif m.id in schon:
-            bereits.append(m)
         else:
             faellig.append((m, betrag))
-    return BeitragVorschau(jahr, faellig, bereits, spaeter, ohne_datum)
+    return BeitragVorschau(jahr, faellig, bereits, spaeter, ohne_datum, betrag_je_konto)
 
 
 def beitraege_abbuchen(
@@ -494,9 +503,13 @@ def beitraege_abbuchen(
     kasse_id: int,
     text: str,
     datum: date | None = None,
+    konto_ids: Collection[int] | None = None,
 ) -> list[Buchung]:
-    """Bucht den Jahresbeitrag je Status für alle fälligen Mitglieder (siehe `beitrag_vorschau`).
+    """Bucht den Jahresbeitrag je Status (siehe `beitrag_vorschau`).
 
+    Ohne `konto_ids` für alle fälligen Mitglieder. Mit `konto_ids` genau für diese – so lassen
+    sich auch später Eingetretene oder Mitglieder ohne Eintrittsdatum dazunehmen und fällige
+    abwählen. Wer für das Jahr schon einen Beitrag hat, wird nie ein zweites Mal belastet.
     Ohne Datum wird auf den 01.01. des Jahres gebucht.
     Läuft in der Transaktion des Aufrufers: Bei einem Fehler wird nichts gebucht.
     """
@@ -505,13 +518,29 @@ def beitraege_abbuchen(
     if not 1900 <= jahr <= 2200:
         raise BuchhaltungsFehler(f"Ungültiges Beitragsjahr: {jahr}")
     vorschau = beitrag_vorschau(session, betraege, jahr)
-    if not vorschau.faellig:
+    if konto_ids is None:
+        auswahl = [m for m, _ in vorschau.faellig]
+    else:
+        gewuenscht = set(konto_ids)
+        doppelt = [m.name for m in vorschau.bereits_abgebucht if m.id in gewuenscht]
+        if doppelt:
+            raise BuchhaltungsFehler(f"Bereits für {jahr} abgebucht: {', '.join(doppelt)}")
+        moeglich = [m for m, _ in vorschau.faellig] + vorschau.zusaetzlich_waehlbar
+        auswahl = [m for m in moeglich if m.id in gewuenscht]
+        unbekannt = gewuenscht - {m.id for m in auswahl}
+        if unbekannt:
+            namen = ", ".join(_konto(session, i).name for i in sorted(unbekannt))
+            raise BuchhaltungsFehler(
+                f"Für {namen} kann kein Beitrag {jahr} gebucht werden (kein aktives Mitglied "
+                "oder kein Beitrag für den Status eingetragen)."
+            )
+    if not auswahl:
         raise BuchhaltungsFehler(f"Es gibt keine Mitglieder, für die ein Beitrag {jahr} fällig ist.")
     gebucht = []
-    for m, betrag in vorschau.faellig:
+    for m in auswahl:
         b = buchen(
-            session, Buchungsart.BEITRAG, m.id, betrag, text, datum or date(jahr, 1, 1),
-            gegenkonto_id=kasse_id,
+            session, Buchungsart.BEITRAG, m.id, vorschau.betrag_je_konto[m.id], text,
+            datum or date(jahr, 1, 1), gegenkonto_id=kasse_id,
         )
         b.beitragsjahr = jahr
         gebucht.append(b)

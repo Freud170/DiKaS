@@ -6,7 +6,8 @@ Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
 ## Konzept
 
 - **Privatkonten**: eins pro Mitglied, mit **Vor- und Nachname** (Pflicht; angezeigt als
-  „Vorname Nachname“, sortiert nach Nachname), Status **Fux**, **Aktiver** oder **Alumni**,
+  „Vorname Nachname“, sortiert nach Nachname), Status **Fux**, **Aktiver**, **Alumni**,
+  **Fördermitglied (FM)** oder **Ehrenmitglied (EM)**,
   Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (optional, kann
   nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,
   Bierspitz und E-Mail.
@@ -35,16 +36,17 @@ Ein Privatkonto im Minus heißt: Das Mitglied schuldet dem Verein noch etwas.
 
 ### Beitragslauf
 
-„Beiträge abbuchen“: **Beitragsjahr** wählen, Betrag je Status (Füxe / Aktive / Alumni)
-eintragen und die Zielkasse wählen. Nach Vorschau und Bestätigung wird für jedes fällige
-Mitglied eine Beitragsbuchung angelegt. Bei einem Fehler wird gar nichts gebucht.
+„Beiträge abbuchen“: **Beitragsjahr** wählen, Betrag je Status (Füxe / Aktive / Alumni /
+Fördermitglieder / Ehrenmitglieder, 0 = beitragsfrei) eintragen und die Zielkasse wählen.
+In der Vorschau wird per **Häkchen** festgelegt, wer belastet wird. Bei einem Fehler wird
+gar nichts gebucht.
 
-Fällig ist, wer **aktiv** ist und am **01.01. des Jahres schon eingetreten** war
-(Eintrittsdatum im Privatkonto). Ausgelassen – und in der Vorschau aufgelistet – werden:
-
-- wer für das Jahr **schon einen Beitrag** hat (Schutz vor Doppelabbuchung; ein Storno gibt das Jahr wieder frei)
-- wer **erst später eingetreten** ist
-- wer **kein Eintrittsdatum** hat (ältere Konten – im Konto nachtragen)
+- **Angehakt** sind alle, die **aktiv** sind und am **01.01. des Jahres schon eingetreten**
+  waren. Einzelne lassen sich abwählen.
+- **Nicht angehakt, aber wählbar** sind Mitglieder, die **erst nach dem 01.01. eingetreten**
+  sind (z. B. am 02.01.) oder **kein Eintrittsdatum** haben.
+- **Gesperrt** ist, wer für das Jahr **schon einen Beitrag** hat (Schutz vor
+  Doppelabbuchung; ein Storno gibt das Jahr wieder frei).
 
 Das Buchungsdatum steht standardmäßig auf dem 01.01. des Beitragsjahres, damit nachgeholte
 Beiträge in der Auswertung im richtigen Jahr erscheinen.
@@ -161,6 +163,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
 | `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
 | `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
+| `test_beitrag_auswahl.py` | Status FM/EM, manuelle Auswahl im Beitragslauf, Doppelschutz |
 | `test_namen.py` | Vor-/Nachname: Pflicht, Aufteilen alter Namen, Sortierung, Anrede, Dialog |
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
 | `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Fehlerfälle, Dialoge |

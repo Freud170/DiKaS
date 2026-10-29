@@ -1,8 +1,16 @@
 """Wiederverwendbare Oberflächen-Bausteine: Tabellenzellen, Kennzahl-Karten, Panels."""
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QTableWidgetItem, QVBoxLayout
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFont, QIntValidator
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
@@ -34,6 +42,42 @@ def fett_machen(item: QTableWidgetItem) -> None:
     schrift = QFont(item.font())
     schrift.setWeight(QFont.DemiBold)
     item.setFont(schrift)
+
+
+# Statt QSpinBox: Die Zahlenfelder von Qt verschlucken mit unserem Stylesheet ihren Text.
+
+class ZahlFeld(QLineEdit):
+    """Eingabefeld nur für ganze Zahlen (z. B. Port), mit value()/setValue() wie eine QSpinBox."""
+
+    def __init__(self, minimum: int, maximum: int, wert: int = 0):
+        super().__init__()
+        self.setValidator(QIntValidator(minimum, maximum, self))
+        self.setValue(wert)
+
+    def value(self) -> int:
+        return int(self.text()) if self.text().strip() else 0
+
+    def setValue(self, wert: int):
+        self.setText(str(wert))
+
+
+class JahrAuswahl(QComboBox):
+    """Auswahlliste von Jahren (neuestes oben), mit value()/setValue()/valueChanged."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, von: int, bis: int, wert: int):
+        super().__init__()
+        for jahr in range(bis, von - 1, -1):
+            self.addItem(str(jahr), jahr)
+        self.setValue(wert)
+        self.currentIndexChanged.connect(lambda _: self.valueChanged.emit(self.value()))
+
+    def value(self) -> int:
+        return self.currentData()
+
+    def setValue(self, jahr: int):
+        self.setCurrentIndex(self.findData(jahr))
 
 
 class Kennzahl(QFrame):

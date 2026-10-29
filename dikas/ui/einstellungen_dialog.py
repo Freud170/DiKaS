@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -21,6 +20,7 @@ from dikas import einstellungen as es
 from dikas.buchhaltung import EMAIL_MUSTER
 from dikas.einstellungen import Einstellungen
 from dikas.ui import stil
+from dikas.ui.bausteine import ZahlFeld
 from dikas.ui.dialoge import _knoepfe
 
 
@@ -49,10 +49,7 @@ class EinstellungenDialog(QDialog):
         self.anbieter = QComboBox()
         self.anbieter.addItems([a.name for a in es.ANBIETER])
         self.server = QLineEdit(e.smtp_server)
-        self.port = QSpinBox()
-        self.port.setRange(1, 65535)
-        self.port.setButtonSymbols(QSpinBox.NoButtons)
-        self.port.setValue(e.smtp_port)
+        self.port = ZahlFeld(1, 65535, e.smtp_port)
         self.verschluesselung = QComboBox()
         self.verschluesselung.addItems(es.VERSCHLUESSELUNGEN)
         self.verschluesselung.setCurrentText(e.smtp_verschluesselung)
@@ -182,6 +179,8 @@ class EinstellungenDialog(QDialog):
 
     def fehler(self) -> str | None:
         e = self.werte()
+        if not 1 <= e.smtp_port <= 65535:
+            return "Bitte einen Port zwischen 1 und 65535 angeben."
         if e.absender_email and not EMAIL_MUSTER.match(e.absender_email):
             return f"„{e.absender_email}“ ist keine gültige E-Mail-Adresse."
         iban = e.iban.replace(" ", "")

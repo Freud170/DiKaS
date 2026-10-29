@@ -3,7 +3,7 @@
 from datetime import date
 
 import pytest
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 from sqlalchemy.orm import sessionmaker
 
@@ -311,21 +311,73 @@ class TestBeitragDialog:
         dialog.jahr.setValue(2024)
         assert dialog.text.text() == "Beitrag Nachzahlung"
 
-    def test_spaeter_eingetretene_werden_ausgelassen(self, dialog):
+    def ausgewaehlt(self, dialog):
+        return [m.name for m, _ in dialog.ausgewaehlte()]
+
+    def zeile(self, dialog, name):
+        return next(z for z in range(dialog.tabelle.rowCount()) if dialog.tabelle.item(z, 1).text() == name)
+
+    def test_spaeter_eingetretene_nicht_vorausgewaehlt(self, dialog):
         dialog.felder[St.FUX].setText("30")
         dialog.felder[St.AKTIVER].setText("60")
         dialog.jahr.setValue(2025)  # Fritz erst am 15.10.2025 eingetreten
-        namen = [dialog.tabelle.item(r, 0).text() for r in range(dialog.tabelle.rowCount())]
-        assert namen == ["Tom"]
+        assert self.ausgewaehlt(dialog) == ["Tom"]
+        z = self.zeile(dialog, "Fritz")
+        assert dialog.tabelle.item(z, 0).checkState() == Qt.Unchecked
+        assert dialog.tabelle.item(z, 5).text() == "Eintritt nach 01.01.2025"
         assert "Erst nach dem 01.01.2025 eingetreten" in dialog.ausgelassen.text()
-        assert "Fritz" in dialog.ausgelassen.text()
+
+    def test_spaeter_eingetretenen_dazunehmen(self, dialog, Sitzung):
+        dialog.felder[St.FUX].setText("30")
+        dialog.felder[St.AKTIVER].setText("60")
+        dialog.jahr.setValue(2025)
+        dialog.tabelle.item(self.zeile(dialog, "Fritz"), 0).setCheckState(Qt.Checked)
+        assert sorted(self.ausgewaehlt(dialog)) == ["Fritz", "Tom"]
+        assert "90,00 €" in dialog.summe.text()
+        dialog.kasse.setCurrentIndex(dialog.kasse.findText("Beitragskasse"))
+        dialog._pruefen()
+        assert dialog.result() == BeitragDialog.Accepted
+        with Sitzung.begin() as s:
+            gebucht = bh.beitraege_abbuchen(s, **dialog.werte())
+            assert sorted(b.betrag_cent for b in gebucht) == [3000, 6000]
+
+    def test_faelligen_abwaehlen(self, dialog):
+        dialog.felder[St.FUX].setText("30")
+        dialog.felder[St.AKTIVER].setText("60")
+        dialog.tabelle.item(self.zeile(dialog, "Tom"), 0).setCheckState(Qt.Unchecked)
+        assert self.ausgewaehlt(dialog) == ["Fritz"]
+        assert "1 Mitglied ausgewählt" in dialog.summe.text()
+
+    def test_auswahl_bleibt_bei_betragsaenderung(self, dialog):
+        dialog.felder[St.FUX].setText("30")
+        dialog.felder[St.AKTIVER].setText("60")
+        dialog.tabelle.item(self.zeile(dialog, "Tom"), 0).setCheckState(Qt.Unchecked)
+        dialog.felder[St.AKTIVER].setText("70")
+        assert self.ausgewaehlt(dialog) == ["Fritz"]
+
+    def test_auswahl_wird_bei_jahreswechsel_zurueckgesetzt(self, dialog):
+        dialog.felder[St.FUX].setText("30")
+        dialog.felder[St.AKTIVER].setText("60")
+        dialog.tabelle.item(self.zeile(dialog, "Tom"), 0).setCheckState(Qt.Unchecked)
+        dialog.jahr.setValue(2025)
+        dialog.jahr.setValue(2026)
+        assert sorted(self.ausgewaehlt(dialog)) == ["Fritz", "Tom"]
+
+    def test_nichts_angehakt(self, dialog, keine_meldungen):
+        dialog.felder[St.AKTIVER].setText("60")
+        dialog.tabelle.item(self.zeile(dialog, "Tom"), 0).setCheckState(Qt.Unchecked)
+        dialog._pruefen()
+        assert dialog.result() != BeitragDialog.Accepted
+        assert "anhaken" in keine_meldungen[-1]
 
     def test_bereits_abgebuchte_werden_angezeigt(self, dialog, Sitzung):
         with Sitzung.begin() as s:
             kasse = next(k for k in bh.konten(s) if k.name == "Beitragskasse")
             bh.beitraege_abbuchen(s, {St.AKTIVER: 6000}, 2026, kasse.id, "Beitrag")
         dialog.felder[St.AKTIVER].setText("60")
-        assert dialog.tabelle.rowCount() == 0
+        assert dialog.ausgewaehlte() == []
+        tom = dialog.tabelle.item(self.zeile(dialog, "Tom"), 0)
+        assert not tom.flags() & Qt.ItemIsUserCheckable  # gesperrt, kein Doppelabbuchen
         assert "Bereits für 2026 abgebucht" in dialog.ausgelassen.text()
 
     def test_kompletter_beitragslauf(self, dialog, Sitzung):
