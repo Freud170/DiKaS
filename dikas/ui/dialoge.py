@@ -12,11 +12,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
-    QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from dikas.buchhaltung import REGELN
 from dikas.db.models import Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text, text_zu_cent
+from dikas.ui import stil
 
 
 def _knoepfe(dialog: QDialog, bei_ok: Callable[[], None]) -> QDialogButtonBox:
@@ -71,7 +72,7 @@ class KontoDialog(QDialog):
         self.aktiv = QCheckBox("Konto ist aktiv")
         self.aktiv.setChecked(konto.aktiv if konto else True)
 
-        self.form = QFormLayout(self)
+        self.form = stil.formular(QFormLayout(self))
         self.form.addRow("Name:", self.name)
         self.form.addRow("Typ:", self.typ)
         self.form.addRow("Status:", self.status)
@@ -118,13 +119,13 @@ class BuchungDialog(QDialog):
         self.konto = QComboBox()
         self.gegen = QComboBox()
         self.hinweis = QLabel()
-        self.hinweis.setStyleSheet("color: gray;")
+        self.hinweis.setObjectName("hinweis")
         self.betrag = QLineEdit()
         self.betrag.setPlaceholderText("z. B. 12,50")
         self.text = QLineEdit()
         self.beleg = QLineEdit()
 
-        self.form = QFormLayout(self)
+        self.form = stil.formular(QFormLayout(self))
         self.form.addRow("Buchungsart:", self.art)
         self.form.addRow("", self.hinweis)
         self.form.addRow("Datum:", self.datum)
@@ -218,7 +219,8 @@ class BeitragDialog(QDialog):
         self.betraege: dict[MitgliedStatus, int] = {}
 
         self.felder: dict[MitgliedStatus, QLineEdit] = {}
-        form = QFormLayout()
+        form = stil.formular(QFormLayout())
+        form.setContentsMargins(0, 0, 0, 0)
         for status in MitgliedStatus:
             feld = QLineEdit()
             feld.setPlaceholderText("0,00")
@@ -234,22 +236,30 @@ class BeitragDialog(QDialog):
         self.text = QLineEdit(f"Jahresbeitrag {date.today().year}")
         form.addRow("Buchungstext:", self.text)
 
-        self.tabelle = QTableWidget(0, 3)
-        self.tabelle.setHorizontalHeaderLabels(["Mitglied", "Status", "Beitrag"])
-        self.tabelle.verticalHeader().setVisible(False)
-        self.tabelle.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tabelle = stil.tabelle(["Mitglied", "Status", "Beitrag"], rechts=[2])
+        self.tabelle.setSelectionMode(QAbstractItemView.NoSelection)
         self.tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.summe = QLabel()
 
+        vorschau_titel = QLabel("Vorschau")
+        vorschau_titel.setObjectName("panelTitel")
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(12, 10, 12, 10)
+        panel_layout.addWidget(vorschau_titel)
+        panel_layout.addWidget(self.tabelle)
+        panel_layout.addWidget(self.summe)
+
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 16)
+        layout.setSpacing(14)
         layout.addLayout(form)
-        layout.addWidget(QLabel("<b>Vorschau</b>"))
-        layout.addWidget(self.tabelle)
-        layout.addWidget(self.summe)
+        layout.addWidget(panel, 1)
         layout.addWidget(_knoepfe(self, self._pruefen))
 
         self._aktualisiere_vorschau()
-        self.resize(480, 560)
+        self.resize(520, 680)
 
     def _lese_betraege(self) -> dict[MitgliedStatus, int] | None:
         """Cent je Status; None, wenn ein Feld ungültig ist."""
@@ -266,7 +276,7 @@ class BeitragDialog(QDialog):
         betraege = self._lese_betraege()
         if betraege is None:
             self.tabelle.setRowCount(0)
-            self.summe.setText("<span style='color:#c0392b'>Ungültiger Betrag</span>")
+            self.summe.setText(f"<span style='color:{stil.NEGATIV}'>Ungültiger Betrag</span>")
             return
         zeilen = self._vorschau(betraege)
         self.tabelle.setRowCount(len(zeilen))

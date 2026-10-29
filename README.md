@@ -101,7 +101,8 @@ dikas/
     models.py       Tabellen (Konto, Buchung)
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung
   ui/
-    hauptfenster.py Kontenübersicht + Buchungsliste
+    stil.py         Farben, Stylesheet, Symbole, deutsche Qt-Texte
+    hauptfenster.py Kennzahlen, Kontenübersicht (Suche/Filter) + Buchungsliste
     dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests
 ```

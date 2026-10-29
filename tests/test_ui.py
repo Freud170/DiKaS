@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from dikas import buchhaltung as bh
 from dikas.db.models import Buchungsart as Art, KontoTyp, MitgliedStatus as St
+from dikas.ui import stil
 from dikas.ui.dialoge import BeitragDialog, BuchungDialog, KontoDialog
 from dikas.ui.hauptfenster import Hauptfenster
 
@@ -131,7 +132,7 @@ class TestHauptfenster:
             fritz.aktiv = False
         fenster.aktualisieren()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Fritz"), 0).foreground().color().name() == "#888888"
+        assert t.item(zeile_von(t, "Fritz"), 0).foreground().color().name() == stil.INAKTIV
 
     def test_negativer_saldo_rot(self, fenster, Sitzung):
         with Sitzung.begin() as s:
@@ -139,7 +140,7 @@ class TestHauptfenster:
             bh.buchen(s, Art.BEITRAG, ids["Fritz"], 3000, "Beitrag", gegenkonto_id=ids["Beitragskasse"])
         fenster.aktualisieren()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Fritz"), 3).foreground().color().name() == "#c0392b"
+        assert t.item(zeile_von(t, "Fritz"), 3).foreground().color().name() == stil.NEGATIV
 
 
 # --- Konto-Dialog ---------------------------------------------------------

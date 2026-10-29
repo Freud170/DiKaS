@@ -1,18 +1,23 @@
-"""Hauptfenster: Kontenübersicht links, Buchungen des gewählten Kontos rechts."""
+"""Hauptfenster: Kennzahlen oben, Kontenübersicht links, Buchungen des gewählten Kontos rechts."""
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -21,11 +26,12 @@ from sqlalchemy.orm import sessionmaker
 from dikas import __version__, buchhaltung
 from dikas.db.models import Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
+from dikas.ui import stil
 from dikas.ui.dialoge import BeitragDialog, BuchungDialog, KontoDialog
 
 ALLE_BUCHUNGEN = None  # Auswahl "kein Konto" -> alle Buchungen anzeigen
-GRAU = QColor("#888888")
-ROT = QColor("#c0392b")
+GRAU = QColor(stil.INAKTIV)
+ROT = QColor(stil.NEGATIV)
 
 # Filter für die Kontenliste: Beschriftung -> Prüffunktion.
 # Gelöschte Konten erscheinen nur unter "Gelöschte".
@@ -39,6 +45,8 @@ KONTEN_FILTER = {
     "Kassen": lambda k: not k.geloescht and k.typ == KontoTyp.KASSE,
     "Gelöschte": lambda k: k.geloescht,
 }
+# Reihenfolge in der Kontenliste: KW oben, dann Kassen, dann Mitglieder
+TYP_REIHENFOLGE = {KontoTyp.KW: 0, KontoTyp.KASSE: 1, KontoTyp.PRIVAT: 2}
 
 
 def _zelle(text: str, rechts: bool = False, daten=None) -> QTableWidgetItem:
@@ -51,11 +59,56 @@ def _zelle(text: str, rechts: bool = False, daten=None) -> QTableWidgetItem:
     return item
 
 
-def _betrag_zelle(cent: int) -> QTableWidgetItem:
+def _betrag_zelle(cent: int, fett: bool = False) -> QTableWidgetItem:
     item = _zelle(cent_zu_text(cent), rechts=True)
     if cent < 0:
         item.setForeground(ROT)
+    if fett:
+        schrift = QFont(item.font())
+        schrift.setWeight(QFont.DemiBold)
+        item.setFont(schrift)
     return item
+
+
+class Kennzahl(QFrame):
+    """Kleine Karte mit Überschrift und großem Wert."""
+
+    def __init__(self, titel: str):
+        super().__init__()
+        self.setObjectName("karte")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(2)
+        ueberschrift = QLabel(titel.upper())
+        ueberschrift.setObjectName("karteTitel")
+        self.wert = QLabel()
+        self.wert.setObjectName("karteWert")
+        layout.addWidget(ueberschrift)
+        layout.addWidget(self.wert)
+
+    def setze(self, cent: int, farbe: str | None = None):
+        self.wert.setText(cent_zu_text(cent))
+        self.wert.setStyleSheet(f"color: {farbe};" if farbe else "")
+
+
+class Panel(QFrame):
+    """Weiße Fläche mit Titelzeile für eine Tabelle."""
+
+    def __init__(self, titel: str):
+        super().__init__()
+        self.setObjectName("panel")
+        self.layout_ = QVBoxLayout(self)
+        self.layout_.setContentsMargins(14, 12, 14, 6)
+        self.layout_.setSpacing(8)
+        self.kopf = QHBoxLayout()
+        self.titel = QLabel(titel)
+        self.titel.setObjectName("panelTitel")
+        self.info = QLabel()
+        self.info.setObjectName("panelInfo")
+        self.kopf.addWidget(self.titel)
+        self.kopf.addStretch()
+        self.kopf.addWidget(self.info)
+        self.layout_.addLayout(self.kopf)
 
 
 class Hauptfenster(QMainWindow):
@@ -63,40 +116,71 @@ class Hauptfenster(QMainWindow):
         super().__init__()
         self.Session = session_factory
         self.setWindowTitle(f"DiKaS {__version__} – {db_pfad}")
-        self.resize(1250, 720)
+        self.resize(1320, 780)
 
         self._baue_werkzeugleiste()
 
+        # Kennzahlen
+        self.karte_kw = Kennzahl("KW-Bestand")
+        self.karte_kassen = Kennzahl("Kassen gesamt")
+        self.karte_guthaben = Kennzahl("Guthaben Mitglieder")
+        self.karte_offen = Kennzahl("Offen bei Mitgliedern")
+        kennzahlen = QHBoxLayout()
+        kennzahlen.setSpacing(12)
+        for karte in (self.karte_kw, self.karte_kassen, self.karte_guthaben, self.karte_offen):
+            kennzahlen.addWidget(karte)
+
+        # Konten
+        self.suche = QLineEdit()
+        self.suche.setPlaceholderText("Konto suchen …")
+        self.suche.setClearButtonEnabled(True)
+        self.suche.addAction(stil.symbol("EditFind"), QLineEdit.LeadingPosition)
+        self.suche.textChanged.connect(self.aktualisieren)
         self.filter = QComboBox()
         self.filter.addItems(KONTEN_FILTER)
         self.filter.currentIndexChanged.connect(self.aktualisieren)
-        self.konten_tabelle = self._neue_tabelle(["Konto", "Typ", "Status", "Saldo"])
+        self.konten_tabelle = self._neue_tabelle(["Konto", "Typ", "Status", "Saldo"], rechts=[3])
+        self.konten_tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.konten_tabelle.itemSelectionChanged.connect(self.lade_buchungen)
         self.konten_tabelle.itemDoubleClicked.connect(self.konto_bearbeiten)
 
-        links = QWidget()
-        layout = QVBoxLayout(links)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.filter)
-        layout.addWidget(self.konten_tabelle)
+        links = Panel("Konten")
+        auswahl = QHBoxLayout()
+        auswahl.addWidget(self.suche, 3)
+        auswahl.addWidget(self.filter, 2)
+        links.layout_.addLayout(auswahl)
+        links.layout_.addWidget(self.konten_tabelle)
+        self.konten_info = links.info
 
-        self.buchungen_titel = QLabel()
+        # Buchungen
         self.buchungen_tabelle = self._neue_tabelle(
-            ["Datum", "Art", "Beleg", "Text", "Soll", "Haben", "Betrag", "Status"]
+            ["Datum", "Art", "Beleg", "Text", "Soll", "Haben", "Betrag", "Status"], rechts=[6]
         )
         self.buchungen_tabelle.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
 
-        rechts = QWidget()
-        layout = QVBoxLayout(rechts)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.buchungen_titel)
-        layout.addWidget(self.buchungen_tabelle)
+        rechts = Panel("")
+        self.buchungen_titel = rechts.titel
+        self.buchungen_info = rechts.info
+        alle = QToolButton()
+        alle.setText("Alle anzeigen")
+        alle.setToolTip("Auswahl aufheben und alle Buchungen anzeigen")
+        alle.clicked.connect(self.zeige_alle_buchungen)
+        rechts.kopf.addWidget(alle)
+        rechts.layout_.addWidget(self.buchungen_tabelle)
 
         splitter = QSplitter()
+        splitter.setChildrenCollapsible(False)
         splitter.addWidget(links)
         splitter.addWidget(rechts)
-        splitter.setSizes([450, 800])
-        self.setCentralWidget(splitter)
+        splitter.setSizes([480, 840])
+
+        inhalt = QWidget()
+        layout = QVBoxLayout(inhalt)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(14)
+        layout.addLayout(kennzahlen)
+        layout.addWidget(splitter, 1)
+        self.setCentralWidget(inhalt)
 
         self.abstimmung = QLabel()
         self.statusBar().addPermanentWidget(self.abstimmung)
@@ -108,33 +192,51 @@ class Hauptfenster(QMainWindow):
     def _baue_werkzeugleiste(self):
         leiste = QToolBar("Aktionen")
         leiste.setMovable(False)
+        leiste.setFloatable(False)
+        leiste.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        leiste.setContextMenuPolicy(Qt.PreventContextMenu)
+        leiste.setIconSize(QSize(18, 18))
         self.addToolBar(leiste)
-        for text, kuerzel, slot in (
-            ("Neues Konto", "Ctrl+K", self.neues_konto),
-            ("Konto bearbeiten", None, self.konto_bearbeiten),
-            ("Konto löschen", None, self.konto_loeschen),
-            ("Wiederherstellen", None, self.konto_wiederherstellen),
-            ("Neue Buchung", "Ctrl+N", self.neue_buchung),
-            ("Beiträge abbuchen", None, self.beitraege_abbuchen),
-            ("Stornieren", None, self.storniere_auswahl),
-            ("Alle Buchungen", None, self.zeige_alle_buchungen),
-            ("Aktualisieren", "F5", self.aktualisieren),
-        ):
-            aktion = QAction(text, self)
-            if kuerzel:
-                aktion.setShortcut(kuerzel)
-            aktion.triggered.connect(slot)
-            leiste.addAction(aktion)
+
+        gruppen = (
+            (
+                ("Neue Buchung", "ListAdd", "Ctrl+N", self.neue_buchung, True),
+                ("Beiträge abbuchen", "MailSend", "Ctrl+B", self.beitraege_abbuchen, False),
+                ("Stornieren", "EditUndo", None, self.storniere_auswahl, False),
+            ),
+            (
+                ("Neues Konto", "ContactNew", "Ctrl+K", self.neues_konto, False),
+                ("Bearbeiten", "DocumentProperties", "Ctrl+E", self.konto_bearbeiten, False),
+                ("Löschen", "EditDelete", None, self.konto_loeschen, False),
+                ("Wiederherstellen", "DocumentRevert", None, self.konto_wiederherstellen, False),
+            ),
+        )
+        for i, gruppe in enumerate(gruppen):
+            if i:
+                leiste.addSeparator()
+            for text, icon, kuerzel, slot, primaer in gruppe:
+                self._aktion(leiste, text, icon, kuerzel, slot, primaer)
+
+        abstand = QWidget()
+        abstand.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        leiste.addWidget(abstand)
+        self._aktion(leiste, "Aktualisieren", "ViewRefresh", "F5", self.aktualisieren, False)
+
+    def _aktion(self, leiste, text, icon, kuerzel, slot, primaer):
+        aktion = QAction(stil.symbol(icon), text, self)
+        if kuerzel:
+            aktion.setShortcut(kuerzel)
+            aktion.setToolTip(f"{text} ({QKeySequence(kuerzel).toString(QKeySequence.NativeText)})")
+        aktion.triggered.connect(slot)
+        leiste.addAction(aktion)
+        if primaer:
+            leiste.widgetForAction(aktion).setObjectName("primaer")
 
     @staticmethod
-    def _neue_tabelle(spalten: list[str]) -> QTableWidget:
-        tabelle = QTableWidget(0, len(spalten))
-        tabelle.setHorizontalHeaderLabels(spalten)
+    def _neue_tabelle(spalten: list[str], rechts: list[int] = ()) -> QTableWidget:
+        tabelle = stil.tabelle(spalten, rechts)
         tabelle.setSelectionBehavior(QAbstractItemView.SelectRows)
         tabelle.setSelectionMode(QAbstractItemView.SingleSelection)
-        tabelle.verticalHeader().setVisible(False)
-        tabelle.setWordWrap(False)
-        tabelle.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         return tabelle
 
     # --- Daten laden ------------------------------------------------------
@@ -142,19 +244,25 @@ class Hauptfenster(QMainWindow):
     def aktualisieren(self):
         gewaehlt = self._gewaehltes_konto_id()
         passt = KONTEN_FILTER[self.filter.currentText()]
+        suchtext = self.suche.text().strip().lower()
         self.konten_tabelle.blockSignals(True)
         self.konten_tabelle.clearSelection()
         with self.Session() as session:
-            konten = [k for k in buchhaltung.konten(session) if passt(k)]
+            alle = buchhaltung.konten(session)
             salden = buchhaltung.salden(session)
             abstimmung = buchhaltung.abstimmung(session)
+        konten = sorted(
+            (k for k in alle if passt(k) and suchtext in k.name.lower()),
+            key=lambda k: (TYP_REIHENFOLGE[k.typ], k.name.lower()),
+        )
+
         self.konten_tabelle.setRowCount(len(konten))
         for zeile, konto in enumerate(konten):
             werte = [
                 _zelle(konto.name, daten=konto.id),
                 _zelle(konto.typ.anzeige),
                 _zelle(konto.status.anzeige if konto.status else ""),
-                _betrag_zelle(salden[konto.id]),
+                _betrag_zelle(salden[konto.id], fett=True),
             ]
             for spalte, item in enumerate(werte):
                 if not konto.aktiv or konto.geloescht:
@@ -163,15 +271,33 @@ class Hauptfenster(QMainWindow):
             if konto.id == gewaehlt:
                 self.konten_tabelle.selectRow(zeile)
         self.konten_tabelle.blockSignals(False)
+        self.konten_info.setText(f"{len(konten)} von {len(alle)}")
 
+        self._aktualisiere_kennzahlen(alle, salden)
         if abstimmung.stimmt:
-            self.abstimmung.setText(f"KW-Konto {cent_zu_text(abstimmung.kw_cent)} ✔ stimmt")
+            self.abstimmung.setObjectName("abstimmungOk")
+            self.abstimmung.setText("✔ Kasse stimmt: KW = Privatkonten + Kassen")
         else:
+            self.abstimmung.setObjectName("abstimmungFehler")
             self.abstimmung.setText(
-                f"<span style='color:#c0392b'>KW {cent_zu_text(abstimmung.kw_cent)} ≠ "
-                f"Privatkonten + Kassen {cent_zu_text(abstimmung.verteilt_cent)}</span>"
+                f"✖ KW {cent_zu_text(abstimmung.kw_cent)} ≠ "
+                f"Privatkonten + Kassen {cent_zu_text(abstimmung.verteilt_cent)}"
             )
+        # Objektname geändert -> Stil neu anwenden
+        self.abstimmung.style().unpolish(self.abstimmung)
+        self.abstimmung.style().polish(self.abstimmung)
         self.lade_buchungen()
+
+    def _aktualisiere_kennzahlen(self, konten: list[Konto], salden: dict[int, int]):
+        privat = [salden[k.id] for k in konten if k.typ == KontoTyp.PRIVAT]
+        kassen = sum(salden[k.id] for k in konten if k.typ == KontoTyp.KASSE)
+        kw = sum(salden[k.id] for k in konten if k.typ == KontoTyp.KW)
+        guthaben = sum(s for s in privat if s > 0)
+        offen = -sum(s for s in privat if s < 0)
+        self.karte_kw.setze(kw, stil.NEGATIV if kw < 0 else None)
+        self.karte_kassen.setze(kassen, stil.NEGATIV if kassen < 0 else None)
+        self.karte_guthaben.setze(guthaben)
+        self.karte_offen.setze(offen, stil.NEGATIV if offen else None)
 
     def _gewaehltes_konto_id(self) -> int | None:
         zeilen = self.konten_tabelle.selectionModel().selectedRows()
@@ -184,9 +310,15 @@ class Hauptfenster(QMainWindow):
         with self.Session() as session:
             liste = buchhaltung.buchungen(session, konto_id)
             konto = session.get(Konto, konto_id) if konto_id is not ALLE_BUCHUNGEN else None
-            self.buchungen_titel.setText(
-                f"<b>Buchungen: {konto.name}</b>" if konto else "<b>Alle Buchungen</b>"
-            )
+            if konto:
+                self.buchungen_titel.setText(f"Buchungen – {konto.name}")
+                saldo = buchhaltung.saldo(session, konto.id)
+                self.buchungen_info.setText(
+                    f"{len(liste)} Buchungen · Saldo <b>{cent_zu_text(saldo)}</b>"
+                )
+            else:
+                self.buchungen_titel.setText("Alle Buchungen")
+                self.buchungen_info.setText(f"{len(liste)} Buchungen")
             self.buchungen_tabelle.setRowCount(len(liste))
             for zeile, b in enumerate(liste):
                 # Aus Sicht des gewählten Kontos: Wirkung auf dessen Saldo
