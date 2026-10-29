@@ -1,1 +1,34 @@
+# Claude
 .claude
+
+# Vereinsdaten – niemals ins Repo!
+daten/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+export/
+backup/
+*.csv
+*.xlsx
+*.pdf
+
+# Umgebungen / Geheimnisse
+.venv/
+venv/
+.env
+
+# Python-Build-Artefakte
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.spec
+
+# Tests / Tools
+.pytest_cache/
+.coverage
+htmlcov/
