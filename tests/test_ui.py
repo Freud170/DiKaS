@@ -36,7 +36,8 @@ def Sitzung(engine):
         bh.konto_anlegen(s, "Beitragskasse", KontoTyp.KASSE)
         bh.konto_anlegen(s, "Getränkekasse", KontoTyp.KASSE)
         tom = bh.konto_anlegen(s, "Tom", KontoTyp.PRIVAT, St.AKTIVER, eintrittsdatum=date(2020, 10, 1))
-        bh.konto_anlegen(s, "Fritz", KontoTyp.PRIVAT, St.FUX, eintrittsdatum=date(2025, 10, 15))
+        bh.konto_anlegen(s, "Fritz", KontoTyp.PRIVAT, St.FUX, eintrittsdatum=date(2025, 10, 15),
+                         bierspitz="Fritze", email="fritz@example.org")
         bh.konto_anlegen(s, "Alfred", KontoTyp.PRIVAT, St.ALUMNI, eintrittsdatum=date(1990, 4, 1))
         bh.buchen(s, Art.EINZAHLUNG, tom.id, 1000, "Überweisung")
     return Sitzung
@@ -67,9 +68,9 @@ class TestHauptfenster:
     def test_zeigt_alle_konten_und_salden(self, fenster):
         t = fenster.konten_tabelle
         assert t.rowCount() == 6
-        assert t.item(zeile_von(t, "Tom"), 4).text() == "10,00 €"
-        assert t.item(zeile_von(t, "KW"), 4).text() == "10,00 €"
-        assert t.item(zeile_von(t, "Fritz"), 2).text() == "Fux"
+        assert t.item(zeile_von(t, "Tom"), 5).text() == "10,00 €"
+        assert t.item(zeile_von(t, "KW"), 5).text() == "10,00 €"
+        assert t.item(zeile_von(t, "Fritz"), 3).text() == "Fux"
 
     def test_abstimmung_in_statusleiste(self, fenster):
         assert "stimmt" in fenster.abstimmung.text()
@@ -107,7 +108,7 @@ class TestHauptfenster:
         fenster.buchungen_tabelle.selectRow(0)
         fenster.storniere_auswahl()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Tom"), 4).text() == "0,00 €"
+        assert t.item(zeile_von(t, "Tom"), 5).text() == "0,00 €"
         assert fenster.buchungen_tabelle.rowCount() == 2
         status = {fenster.buchungen_tabelle.item(r, 7).text() for r in range(2)}
         assert status == {"storniert", ""}
@@ -143,7 +144,7 @@ class TestHauptfenster:
             bh.buchen(s, Art.BEITRAG, ids["Fritz"], 3000, "Beitrag", gegenkonto_id=ids["Beitragskasse"])
         fenster.aktualisieren()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Fritz"), 4).foreground().color().name() == stil.NEGATIV
+        assert t.item(zeile_von(t, "Fritz"), 5).foreground().color().name() == stil.NEGATIV
 
 
 # --- Konto-Dialog ---------------------------------------------------------
@@ -170,7 +171,8 @@ class TestKontoDialog:
         d = KontoDialog(None, fritz)
         assert d.werte() == {"name": "Fritz", "typ": KontoTyp.PRIVAT, "status": St.FUX,
                              "eintrittsdatum": date(2025, 10, 15), "bemerkung": "", "aktiv": True,
-                             "statusverlauf": [(St.FUX, date(2025, 10, 15))]}
+                             "statusverlauf": [(St.FUX, date(2025, 10, 15))],
+                             "bierspitz": "Fritze", "email": "fritz@example.org"}
         assert not d.typ.isEnabled()
 
     def test_eintrittsdatum_standard_heute(self, app):
@@ -193,6 +195,7 @@ class TestKontoDialog:
     def test_eintrittsdatum_pflicht(self, app, Sitzung, keine_meldungen):
         d = KontoDialog()
         d.name.setText("Neu")
+        d.email.setText("neu@example.org")
         d.eintritt.setDate(UNBEKANNT)
         d._pruefen()
         assert d.result() != KontoDialog.Accepted

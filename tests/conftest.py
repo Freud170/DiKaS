@@ -13,6 +13,40 @@ from dikas.geld import text_zu_cent
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
+@pytest.fixture(autouse=True)
+def keine_offenen_meldungen(monkeypatch):
+    """Meldungsfenster würden einen Test endlos blockieren – stattdessen sofort fehlschlagen.
+
+    Tests, die Meldungen erwarten, ersetzen diese Funktionen selbst (überschreibt dies hier).
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    def unerwartet(*args):
+        raise AssertionError(f"Unerwartete Meldung: {args[2] if len(args) > 2 else args}")
+
+    for name in ("warning", "information", "question", "critical"):
+        monkeypatch.setattr(QMessageBox, name, unerwartet)
+
+
+@pytest.fixture(autouse=True)
+def qt_aufraeumen():
+    """Nach jedem Test alle Fenster schließen und löschen, solange Qt noch läuft.
+
+    Sonst räumt Python sie erst beim Programmende auf – nach der QApplication – und der
+    Prozess stürzt beim Beenden ab (Windows-Fehler 0xC0000409), obwohl alle Tests grün sind.
+    """
+    yield
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    if QApplication.instance() is None:
+        return
+    for fenster in QApplication.topLevelWidgets():
+        fenster.close()
+        fenster.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
 @pytest.fixture
 def engine():
     engine = erstelle_engine(":memory:")

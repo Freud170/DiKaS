@@ -47,7 +47,11 @@ def erstelle_engine(pfad: Path | str | None = None) -> Engine:
 # Spalten, die nach dem ersten Einsatz dazugekommen sind: werden in bestehenden
 # Datenbanken beim Start ergänzt (vorhandene Daten bleiben unverändert).
 NACHTRAEGLICHE_SPALTEN = {
-    "konten": {"eintrittsdatum": "DATE"},
+    "konten": {
+        "eintrittsdatum": "DATE",
+        "bierspitz": "VARCHAR(100) NOT NULL DEFAULT ''",
+        "email": "VARCHAR(200) NOT NULL DEFAULT ''",
+    },
     "buchungen": {"beitragsjahr": "INTEGER"},
 }
 

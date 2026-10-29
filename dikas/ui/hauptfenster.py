@@ -26,6 +26,8 @@ from dikas.db.models import Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
 from dikas.ui.auswertung import AuswertungDialog
+from dikas.ui.einstellungen_dialog import einstellungen_bearbeiten
+from dikas.ui.versand_dialog import VersandDialog
 from dikas.ui.bausteine import GRAU, Kennzahl, Panel
 from dikas.ui.bausteine import betrag_zelle as _betrag_zelle
 from dikas.ui.bausteine import zelle as _zelle
@@ -68,7 +70,7 @@ class Hauptfenster(QMainWindow):
 
         # Konten
         self.suche = QLineEdit()
-        self.suche.setPlaceholderText("Konto suchen …")
+        self.suche.setPlaceholderText("Name, Bierspitz oder E-Mail suchen …")
         self.suche.setClearButtonEnabled(True)
         self.suche.addAction(stil.symbol("EditFind"), QLineEdit.LeadingPosition)
         self.suche.textChanged.connect(self.aktualisieren)
@@ -76,7 +78,7 @@ class Hauptfenster(QMainWindow):
         self.filter.addItems(KONTEN_FILTER)
         self.filter.currentIndexChanged.connect(self.aktualisieren)
         self.konten_tabelle = self._neue_tabelle(
-            ["Konto", "Typ", "Status", "Eintritt", "Saldo"], rechts=[4]
+            ["Konto", "Bierspitz", "Typ", "Status", "Eintritt", "Saldo"], rechts=[5]
         )
         self.konten_tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.konten_tabelle.itemSelectionChanged.connect(self.lade_buchungen)
@@ -139,14 +141,18 @@ class Hauptfenster(QMainWindow):
         gruppen = (
             (
                 ("Neue Buchung", "ListAdd", "Ctrl+N", self.neue_buchung, True),
-                ("Beiträge abbuchen", "MailSend", "Ctrl+B", self.beitraege_abbuchen, False),
+                ("Beiträge abbuchen", "DocumentNew", "Ctrl+B", self.beitraege_abbuchen, False),
                 ("Stornieren", "EditUndo", None, self.storniere_auswahl, False),
             ),
             (
                 ("Neues Konto", "ContactNew", "Ctrl+K", self.neues_konto, False),
-                ("Bearbeiten", "DocumentProperties", "Ctrl+E", self.konto_bearbeiten, False),
+                ("Bearbeiten", "MailMessageNew", "Ctrl+E", self.konto_bearbeiten, False),
                 ("Löschen", "EditDelete", None, self.konto_loeschen, False),
                 ("Wiederherstellen", "DocumentRevert", None, self.konto_wiederherstellen, False),
+            ),
+            (
+                ("Auswertung", "DocumentPrintPreview", "Ctrl+P", self.auswertung, False),
+                ("Kontoauszüge", "MailSend", "Ctrl+M", self.kontoauszuege, False),
             ),
         )
         for i, gruppe in enumerate(gruppen):
@@ -158,18 +164,26 @@ class Hauptfenster(QMainWindow):
         abstand = QWidget()
         abstand.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         leiste.addWidget(abstand)
-        self._aktion(leiste, "Auswertung", "DocumentPrintPreview", "Ctrl+P", self.auswertung, False)
-        self._aktion(leiste, "Aktualisieren", "ViewRefresh", "F5", self.aktualisieren, False)
+        # Rechts nur ein Symbol (Beschriftung als Tooltip), damit die Leiste nicht überläuft
+        self._aktion(leiste, "Einstellungen", "DocumentProperties", None, self.einstellungen, False, True)
+        # Aktualisieren nur per Taste: nach jeder Änderung wird ohnehin neu geladen
+        neu_laden = QAction("Aktualisieren", self)
+        neu_laden.setShortcut("F5")
+        neu_laden.triggered.connect(self.aktualisieren)
+        self.addAction(neu_laden)
 
-    def _aktion(self, leiste, text, icon, kuerzel, slot, primaer):
+    def _aktion(self, leiste, text, icon, kuerzel, slot, primaer, nur_symbol=False):
         aktion = QAction(stil.symbol(icon), text, self)
         if kuerzel:
             aktion.setShortcut(kuerzel)
             aktion.setToolTip(f"{text} ({QKeySequence(kuerzel).toString(QKeySequence.NativeText)})")
         aktion.triggered.connect(slot)
         leiste.addAction(aktion)
+        knopf = leiste.widgetForAction(aktion)
         if primaer:
-            leiste.widgetForAction(aktion).setObjectName("primaer")
+            knopf.setObjectName("primaer")
+        if nur_symbol:
+            knopf.setToolButtonStyle(Qt.ToolButtonIconOnly)
 
     @staticmethod
     def _neue_tabelle(spalten: list[str], rechts: list[int] = ()) -> QTableWidget:
@@ -191,7 +205,7 @@ class Hauptfenster(QMainWindow):
             salden = buchhaltung.salden(session)
             abstimmung = buchhaltung.abstimmung(session)
         konten = sorted(
-            (k for k in alle if passt(k) and suchtext in k.name.lower()),
+            (k for k in alle if passt(k) and suchtext in f"{k.name} {k.bierspitz} {k.email}".lower()),
             key=lambda k: (k.typ.reihenfolge, k.name.lower()),
         )
 
@@ -199,6 +213,7 @@ class Hauptfenster(QMainWindow):
         for zeile, konto in enumerate(konten):
             werte = [
                 _zelle(konto.name, daten=konto.id),
+                _zelle(konto.bierspitz),
                 _zelle(konto.typ.anzeige),
                 _zelle(konto.status.anzeige if konto.status else ""),
                 _zelle(konto.eintrittsdatum.strftime("%d.%m.%Y") if konto.eintrittsdatum else ""),
@@ -287,6 +302,13 @@ class Hauptfenster(QMainWindow):
     def auswertung(self):
         AuswertungDialog(self.Session, self).exec()
 
+    def kontoauszuege(self):
+        VersandDialog(self.Session, self).exec()
+
+    def einstellungen(self):
+        if einstellungen_bearbeiten(self.Session, self):
+            self.statusBar().showMessage("Einstellungen gespeichert.", 5000)
+
     def neues_konto(self):
         dialog = KontoDialog(self)
         if dialog.exec() != KontoDialog.Accepted:
@@ -294,7 +316,8 @@ class Hauptfenster(QMainWindow):
         w = dialog.werte()
         self._ausfuehren(
             lambda s: buchhaltung.konto_anlegen(
-                s, w["name"], w["typ"], w["status"], w["bemerkung"], w["eintrittsdatum"]
+                s, w["name"], w["typ"], w["status"], w["bemerkung"], w["eintrittsdatum"],
+                bierspitz=w["bierspitz"], email=w["email"],
             )
         )
 
@@ -310,7 +333,7 @@ class Hauptfenster(QMainWindow):
         self._ausfuehren(
             lambda s: buchhaltung.konto_bearbeiten(
                 s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"], w["eintrittsdatum"],
-                statusverlauf=w["statusverlauf"],
+                statusverlauf=w["statusverlauf"], bierspitz=w["bierspitz"], email=w["email"],
             )
         )
 

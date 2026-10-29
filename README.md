@@ -5,7 +5,9 @@ Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
 
 ## Konzept
 
-- **Privatkonten**: eins pro Mitglied, mit Status **Fux**, **Aktiver** oder **Alumni**
+- **Privatkonten**: eins pro Mitglied, mit Status **Fux**, **Aktiver** oder **Alumni**,
+  Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (Pflicht beim
+  Anlegen/Bearbeiten). Die Suche findet Name, Bierspitz und E-Mail.
 - **Kassen**: beliebig viele, getrennt geführt
 - **KW-Konto**: genau eins, bildet den tatsächlichen liquiden Bestand ab (wird automatisch angelegt)
 
@@ -72,6 +74,30 @@ Dieser/Letzter Monat oder frei), Start- und Enddatum zählen mit.
 Stornierte Buchungen und ihre Stornos zählen jeweils als Zu- und Abgang, heben sich
 in der Veränderung aber auf.
 
+### Kontoauszüge per E-Mail
+
+Button „Kontoauszüge“ (Strg+M): Stichtag wählen → jedes Mitglied bekommt seinen Kontostand
+zu diesem Tag per Mail.
+
+- **Saldo negativ**: offener Betrag + Bankdaten + Verwendungszweck zum Überweisen
+- **Saldo positiv**: Guthaben + „melde dich, wenn du es zurück willst“
+- **Saldo 0**: „Gut gewirtschaftet! 🍻“
+
+Ablauf: Empfänger prüfen (Vorauswahl: mit E-Mail, aktiv oder mit offenem Saldo, für diesen
+Stichtag noch nicht versendet) → Vorschau ansehen → **Testmail an mich** → senden. Jeder
+Versand wird protokolliert („Zuletzt versendet“); wer für den Stichtag schon eine Mail hat,
+ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt.
+
+**Einstellungen** (Schraubenschlüssel oben rechts):
+
+- *E-Mail-Konto*: Anbieter-Vorlagen für Gmail, GMX, web.de, T-Online, iCloud, IONOS, Strato
+  oder eigener Server (SMTP-Server, Port, STARTTLS/SSL). Das **Passwort wird nicht
+  gespeichert**, sondern beim Versand abgefragt. Gmail braucht ein **App-Passwort**
+  (Google-Konto → Sicherheit → Bestätigung in zwei Schritten → App-Passwörter).
+- *Bankdaten*: Kontoinhaber, IBAN, BIC, Bank
+- *Texte*: Betreff, Verwendungszweck und die drei Mailtexte mit Platzhaltern wie
+  `{anrede}` (Bierspitz, sonst Name), `{saldo}`, `{betrag}`, `{stichtag}`, `{iban}` …
+
 ### Regeln
 
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
@@ -125,6 +151,8 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
 | `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
 | `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
+| `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
+| `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Fehlerfälle, Dialoge |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geld.py` | Betragseingabe und -anzeige |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
@@ -138,15 +166,19 @@ schreiben lassen (`verein.einzahlung(tom, "12,50")`).
 dikas/
   app.py            Programmstart
   buchhaltung.py    Fachlogik: Konten, Buchungsarten, Storno, Beitragslauf, Salden
+  einstellungen.py  Einstellungen (Mailserver, Bankdaten, Textvorlagen), Anbieter-Vorlagen
+  kontoauszug.py    Kontoauszug-Mails erzeugen, per SMTP senden, Versand protokollieren
   geld.py           Cent <-> "12,50 €"
   db/
-    models.py       Tabellen (Konto, Statuswechsel, Buchung)
+    models.py       Tabellen (Konto, Statuswechsel, Buchung, Einstellung, Mailversand)
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung
   ui/
     stil.py         Farben, Stylesheet, Symbole, deutsche Qt-Texte
     bausteine.py    Gemeinsame Bausteine (Tabellenzellen, Kennzahl-Karten, Panels)
     hauptfenster.py Kennzahlen, Kontenübersicht (Suche/Filter) + Buchungsliste
     auswertung.py   Auswertung über einen Zeitraum + PDF-Export
+    einstellungen_dialog.py  Einstellungen bearbeiten
+    versand_dialog.py        Kontoauszüge per E-Mail versenden
     dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests
 ```

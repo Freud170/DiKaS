@@ -5,6 +5,7 @@ welche Konten erlaubt sind und welches Konto im Soll bzw. Haben steht.
 Wirkung auf den Saldo siehe `dikas.db.models`.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -82,6 +83,20 @@ def _pruefe_eintritt(typ: KontoTyp, eintrittsdatum: date | None) -> None:
         raise BuchhaltungsFehler("Nur Privatkonten haben ein Eintrittsdatum.")
 
 
+# Bewusst einfach: genau ein @, kein Leerzeichen, Punkt in der Domain
+EMAIL_MUSTER = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _pruefe_kontakt(typ: KontoTyp, bierspitz: str, email: str) -> tuple[str, str]:
+    """Bereinigte Werte für Bierspitz und E-Mail (leer = nicht angegeben)."""
+    bierspitz, email = bierspitz.strip(), email.strip()
+    if typ != KontoTyp.PRIVAT and (bierspitz or email):
+        raise BuchhaltungsFehler("Nur Privatkonten haben Bierspitz und E-Mail-Adresse.")
+    if email and not EMAIL_MUSTER.match(email):
+        raise BuchhaltungsFehler(f"„{email}“ ist keine gültige E-Mail-Adresse.")
+    return bierspitz, email
+
+
 def konto_anlegen(
     session: Session,
     name: str,
@@ -89,14 +104,18 @@ def konto_anlegen(
     status: MitgliedStatus | None = None,
     bemerkung: str = "",
     eintrittsdatum: date | None = None,
+    bierspitz: str = "",
+    email: str = "",
 ) -> Konto:
     if typ == KontoTyp.KW:
         raise BuchhaltungsFehler("Es gibt genau ein KW-Konto, es wird automatisch angelegt.")
     name = _pruefe_name(session, name, typ)
     _pruefe_status(typ, status)
     _pruefe_eintritt(typ, eintrittsdatum)
+    bierspitz, email = _pruefe_kontakt(typ, bierspitz, email)
     konto = Konto(
-        name=name, typ=typ, status=status, bemerkung=bemerkung.strip(), eintrittsdatum=eintrittsdatum
+        name=name, typ=typ, status=status, bemerkung=bemerkung.strip(), eintrittsdatum=eintrittsdatum,
+        bierspitz=bierspitz, email=email,
     )
     if typ == KontoTyp.PRIVAT:
         konto.statusverlauf.append(Statuswechsel(status=status, gueltig_ab=eintrittsdatum or date.today()))
@@ -114,8 +133,10 @@ def konto_bearbeiten(
     aktiv: bool,
     eintrittsdatum: date | None = None,
     statusverlauf: list[tuple[MitgliedStatus, date]] | None = None,
+    bierspitz: str | None = None,
+    email: str | None = None,
 ) -> Konto:
-    """Ändert ein Konto. `eintrittsdatum=None` lässt das bisherige Datum unverändert.
+    """Ändert ein Konto. `None` bei Eintrittsdatum, Bierspitz oder E-Mail lässt den Wert unverändert.
 
     Mit `statusverlauf` wird der komplette Verlauf ersetzt (und `status` ignoriert).
     Ohne Verlauf wird ein geänderter `status` als Statuswechsel ab heute eingetragen.
@@ -127,6 +148,12 @@ def konto_bearbeiten(
         raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
     konto.name = _pruefe_name(session, name, konto.typ, ausser_id=konto.id)
     _pruefe_eintritt(konto.typ, eintrittsdatum)
+    neuer_bierspitz, neue_email = _pruefe_kontakt(
+        konto.typ,
+        konto.bierspitz if bierspitz is None else bierspitz,
+        konto.email if email is None else email,
+    )
+    konto.bierspitz, konto.email = neuer_bierspitz, neue_email
     if statusverlauf is not None:
         statusverlauf_setzen(session, konto.id, statusverlauf)
     else:
@@ -462,19 +489,17 @@ def beitraege_abbuchen(
 
 # --- Salden ---------------------------------------------------------------
 
-def salden(session: Session) -> dict[int, int]:
-    """Saldo in Cent für jedes Konto (auch Konten ohne Buchungen)."""
+def salden(session: Session, bis: date | None = None) -> dict[int, int]:
+    """Saldo in Cent für jedes Konto (auch Konten ohne Buchungen), optional zum Stichtag `bis`."""
     typen = dict(session.execute(select(Konto.id, Konto.typ)).all())
-    soll = dict(
-        session.execute(
-            select(Buchung.soll_konto_id, func.sum(Buchung.betrag_cent)).group_by(Buchung.soll_konto_id)
-        ).all()
-    )
-    haben = dict(
-        session.execute(
-            select(Buchung.haben_konto_id, func.sum(Buchung.betrag_cent)).group_by(Buchung.haben_konto_id)
-        ).all()
-    )
+
+    def summen(spalte) -> dict[int, int]:
+        abfrage = select(spalte, func.sum(Buchung.betrag_cent)).group_by(spalte)
+        if bis is not None:
+            abfrage = abfrage.where(Buchung.datum <= bis)
+        return dict(session.execute(abfrage).all())
+
+    soll, haben = summen(Buchung.soll_konto_id), summen(Buchung.haben_konto_id)
     ergebnis = {}
     for konto_id, typ in typen.items():
         differenz = soll.get(konto_id, 0) - haben.get(konto_id, 0)

@@ -13,7 +13,7 @@ import enum
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -95,6 +95,9 @@ class Konto(Base):
     )
     # Nur bei Privatkonten; entscheidet, ab welchem Jahr Beiträge fällig sind
     eintrittsdatum: Mapped[Optional[date]] = mapped_column(default=None)
+    # Nur bei Privatkonten: Spitzname im Verein und Adresse für den Kontoauszug
+    bierspitz: Mapped[str] = mapped_column(String(100), default="")
+    email: Mapped[str] = mapped_column(String(200), default="")
     aktiv: Mapped[bool] = mapped_column(default=True)
     # Archiviert: Saldo war 0, Konto hat aber Buchungen und bleibt deshalb erhalten
     geloescht: Mapped[bool] = mapped_column(default=False)
@@ -185,3 +188,29 @@ class Buchung(Base):
             f"<Buchung {self.id} {self.datum} {self.art} {self.betrag_cent}ct "
             f"S{self.soll_konto_id}/H{self.haben_konto_id}>"
         )
+
+
+class Einstellung(Base):
+    """Programmeinstellungen als Schlüssel/Wert (z. B. Mailserver, Bankdaten, Textvorlagen)."""
+
+    __tablename__ = "einstellungen"
+
+    schluessel: Mapped[str] = mapped_column(String(50), primary_key=True)
+    wert: Mapped[str] = mapped_column(Text, default="")
+
+
+class Mailversand(Base):
+    """Protokoll: wem wann welcher Kontoauszug geschickt wurde (auch fehlgeschlagene Versuche)."""
+
+    __tablename__ = "mailversand"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    konto_id: Mapped[int] = mapped_column(ForeignKey("konten.id"))
+    stichtag: Mapped[date]
+    saldo_cent: Mapped[int]
+    empfaenger: Mapped[str] = mapped_column(String(200))
+    gesendet_am: Mapped[datetime] = mapped_column(default=datetime.now)
+    erfolgreich: Mapped[bool]
+    fehler: Mapped[str] = mapped_column(String(500), default="")
+
+    konto: Mapped[Konto] = relationship()

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dikas.buchhaltung import REGELN, BeitragVorschau, status_am
+from dikas.buchhaltung import EMAIL_MUSTER, REGELN, BeitragVorschau, status_am
 from dikas.db.models import Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text, text_zu_cent
 from dikas.ui import stil
@@ -165,6 +165,10 @@ class KontoDialog(QDialog):
         self.eintritt.setSpecialValueText("unbekannt")
         if konto:
             self.eintritt.setDate(_qdate(konto.eintrittsdatum) if konto.eintrittsdatum else UNBEKANNT)
+        self.bierspitz = QLineEdit(konto.bierspitz if konto else "")
+        self.bierspitz.setPlaceholderText("optional")
+        self.email = QLineEdit(konto.email if konto else "")
+        self.email.setPlaceholderText("name@beispiel.de")
         self.bemerkung = QLineEdit(konto.bemerkung if konto else "")
         self.aktiv = QCheckBox("Konto ist aktiv")
         self.aktiv.setChecked(konto.aktiv if konto else True)
@@ -180,6 +184,8 @@ class KontoDialog(QDialog):
         self.form = stil.formular(QFormLayout(self))
         self.form.addRow("Name:", self.name)
         self.form.addRow("Typ:", self.typ)
+        self.form.addRow("Bierspitz:", self.bierspitz)
+        self.form.addRow("E-Mail:", self.email)
         self.form.addRow("Status:", self.status)
         self.form.addRow("Eintrittsdatum:", self.eintritt)
         if self.verlauf:
@@ -196,15 +202,24 @@ class KontoDialog(QDialog):
     def _typ_geaendert(self):
         privat = self.typ.currentData() == KontoTyp.PRIVAT
         self.form.setRowVisible(self.status, privat and self.verlauf is None)
-        self.form.setRowVisible(self.eintritt, privat)
+        for feld in (self.eintritt, self.bierspitz, self.email):
+            self.form.setRowVisible(feld, privat)
 
     def _pruefen(self):
         if not self.name.text().strip():
             QMessageBox.warning(self, "Fehler", "Bitte einen Namen angeben.")
             return
-        if self.typ.currentData() == KontoTyp.PRIVAT and self.eintritt.date() == UNBEKANNT:
-            QMessageBox.warning(self, "Fehler", "Bitte ein Eintrittsdatum angeben.")
-            return
+        if self.typ.currentData() == KontoTyp.PRIVAT:
+            email = self.email.text().strip()
+            if not email:
+                QMessageBox.warning(self, "Fehler", "Bitte eine E-Mail-Adresse angeben.")
+                return
+            if not EMAIL_MUSTER.match(email):
+                QMessageBox.warning(self, "Fehler", f"„{email}“ ist keine gültige E-Mail-Adresse.")
+                return
+            if self.eintritt.date() == UNBEKANNT:
+                QMessageBox.warning(self, "Fehler", "Bitte ein Eintrittsdatum angeben.")
+                return
         if self.verlauf and (fehler := self.verlauf.fehler()):
             QMessageBox.warning(self, "Fehler", fehler)
             return
@@ -224,6 +239,8 @@ class KontoDialog(QDialog):
             "status": status,
             "eintrittsdatum": eintritt.toPython() if privat and eintritt != UNBEKANNT else None,
             "statusverlauf": self.verlauf.werte() if self.verlauf else None,
+            "bierspitz": self.bierspitz.text() if privat else "",
+            "email": self.email.text() if privat else "",
             "bemerkung": self.bemerkung.text(),
             "aktiv": self.aktiv.isChecked(),
         }
@@ -348,6 +365,7 @@ class BeitragDialog(QDialog):
         form.setContentsMargins(0, 0, 0, 0)
         self.jahr = QSpinBox()
         self.jahr.setRange(1950, heute.year + 1)
+        self.jahr.setButtonSymbols(QSpinBox.NoButtons)  # Jahr tippen oder mit Mausrad/Pfeiltasten ändern
         self.jahr.setValue(heute.year)
         form.addRow("Beitragsjahr:", self.jahr)
         self.felder: dict[MitgliedStatus, QLineEdit] = {}
