@@ -1,6 +1,7 @@
 """Bierspitz und E-Mail-Adresse bei Privatkonten."""
 
 import sqlite3
+from datetime import date
 
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -109,12 +110,30 @@ class TestDialog:
         assert not d.form.isRowVisible(d.bierspitz) and not d.form.isRowVisible(d.email)
         assert (d.werte()["bierspitz"], d.werte()["email"]) == ("", "")
 
-    def test_email_pflicht(self, app, meldungen):
+    @pytest.mark.parametrize("email", ["", "   "])
+    def test_email_optional(self, app, meldungen, email):
         d = KontoDialog()
-        self._ausfuellen(d, email="")
+        self._ausfuellen(d, email=email)
         d._pruefen()
-        assert d.result() != KontoDialog.Accepted
-        assert "E-Mail" in meldungen[-1]
+        assert d.result() == KontoDialog.Accepted
+        assert meldungen == []
+        assert d.werte()["email"].strip() == ""
+
+    def test_email_nachtragen(self, app, session):
+        tom = mitglied(session, eintrittsdatum=date(2020, 1, 1))  # ohne E-Mail angelegt
+        d = KontoDialog(None, tom)
+        d.email.setText("tom@example.org")
+        d._pruefen()
+        assert d.result() == KontoDialog.Accepted
+        w = d.werte()
+        bh.konto_bearbeiten(session, tom.id, w["name"], w["status"], w["bemerkung"], w["aktiv"],
+                            email=w["email"])
+        assert tom.email == "tom@example.org"
+
+    def test_email_wieder_entfernen(self, session):
+        tom = mitglied(session, email="tom@example.org")
+        bh.konto_bearbeiten(session, tom.id, "Tom", St.AKTIVER, "", True, email="")
+        assert tom.email == ""
 
     def test_email_ungueltig(self, app, meldungen):
         d = KontoDialog()

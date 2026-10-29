@@ -168,7 +168,7 @@ class KontoDialog(QDialog):
         self.bierspitz = QLineEdit(konto.bierspitz if konto else "")
         self.bierspitz.setPlaceholderText("optional")
         self.email = QLineEdit(konto.email if konto else "")
-        self.email.setPlaceholderText("name@beispiel.de")
+        self.email.setPlaceholderText("optional, z. B. name@beispiel.de")
         self.bemerkung = QLineEdit(konto.bemerkung if konto else "")
         self.aktiv = QCheckBox("Konto ist aktiv")
         self.aktiv.setChecked(konto.aktiv if konto else True)
@@ -210,11 +210,9 @@ class KontoDialog(QDialog):
             QMessageBox.warning(self, "Fehler", "Bitte einen Namen angeben.")
             return
         if self.typ.currentData() == KontoTyp.PRIVAT:
+            # E-Mail ist optional (kann nachgetragen werden), muss aber gültig sein, wenn angegeben
             email = self.email.text().strip()
-            if not email:
-                QMessageBox.warning(self, "Fehler", "Bitte eine E-Mail-Adresse angeben.")
-                return
-            if not EMAIL_MUSTER.match(email):
+            if email and not EMAIL_MUSTER.match(email):
                 QMessageBox.warning(self, "Fehler", f"„{email}“ ist keine gültige E-Mail-Adresse.")
                 return
             if self.eintritt.date() == UNBEKANNT:

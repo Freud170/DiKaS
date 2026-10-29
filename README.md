@@ -6,8 +6,9 @@ Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
 ## Konzept
 
 - **Privatkonten**: eins pro Mitglied, mit Status **Fux**, **Aktiver** oder **Alumni**,
-  Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (Pflicht beim
-  Anlegen/Bearbeiten). Die Suche findet Name, Bierspitz und E-Mail.
+  Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (optional, kann
+  nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,
+  Bierspitz und E-Mail.
 - **Kassen**: beliebig viele, getrennt geführt
 - **KW-Konto**: genau eins, bildet den tatsächlichen liquiden Bestand ab (wird automatisch angelegt)
 
