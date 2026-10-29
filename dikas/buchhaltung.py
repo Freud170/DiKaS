@@ -11,7 +11,7 @@ from datetime import date
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus
+from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus, Statuswechsel
 from dikas.geld import cent_zu_text
 
 
@@ -98,6 +98,8 @@ def konto_anlegen(
     konto = Konto(
         name=name, typ=typ, status=status, bemerkung=bemerkung.strip(), eintrittsdatum=eintrittsdatum
     )
+    if typ == KontoTyp.PRIVAT:
+        konto.statusverlauf.append(Statuswechsel(status=status, gueltig_ab=eintrittsdatum or date.today()))
     session.add(konto)
     session.flush()
     return konto
@@ -111,23 +113,89 @@ def konto_bearbeiten(
     bemerkung: str,
     aktiv: bool,
     eintrittsdatum: date | None = None,
+    statusverlauf: list[tuple[MitgliedStatus, date]] | None = None,
 ) -> Konto:
-    """Ändert ein Konto. `eintrittsdatum=None` lässt das bisherige Datum unverändert."""
+    """Ändert ein Konto. `eintrittsdatum=None` lässt das bisherige Datum unverändert.
+
+    Mit `statusverlauf` wird der komplette Verlauf ersetzt (und `status` ignoriert).
+    Ohne Verlauf wird ein geänderter `status` als Statuswechsel ab heute eingetragen.
+    """
     konto = _konto(session, konto_id)
     if konto.geloescht:
         raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen.")
     if konto.typ == KontoTyp.KW and not aktiv:
         raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
     konto.name = _pruefe_name(session, name, konto.typ, ausser_id=konto.id)
-    _pruefe_status(konto.typ, status)
     _pruefe_eintritt(konto.typ, eintrittsdatum)
-    konto.status = status
+    if statusverlauf is not None:
+        statusverlauf_setzen(session, konto.id, statusverlauf)
+    else:
+        _pruefe_status(konto.typ, status)
+        if status != konto.status:
+            status_wechseln(session, konto.id, status, date.today())
     konto.bemerkung = bemerkung.strip()
     konto.aktiv = aktiv
     if eintrittsdatum is not None:
         konto.eintrittsdatum = eintrittsdatum
     session.flush()
     return konto
+
+
+# --- Statusverlauf --------------------------------------------------------
+
+def status_am(konto: Konto, stichtag: date) -> MitgliedStatus | None:
+    """Status, den das Mitglied am Stichtag hatte.
+
+    Vor dem ersten Eintrag gilt der erste Eintrag; ohne Verlauf (ältere Konten) der aktuelle Status.
+    """
+    if konto.typ != KontoTyp.PRIVAT:
+        return None
+    if not konto.statusverlauf:
+        return konto.status
+    gueltig = [w for w in konto.statusverlauf if w.gueltig_ab <= stichtag]
+    return (gueltig[-1] if gueltig else konto.statusverlauf[0]).status
+
+
+def _privatkonto(session: Session, konto_id: int) -> Konto:
+    konto = _konto(session, konto_id)
+    if konto.typ != KontoTyp.PRIVAT:
+        raise BuchhaltungsFehler("Nur Privatkonten haben einen Status.")
+    return konto
+
+
+def statusverlauf_setzen(
+    session: Session, konto_id: int, verlauf: list[tuple[MitgliedStatus, date]]
+) -> Konto:
+    """Ersetzt den kompletten Statusverlauf; der aktuelle Status ist danach der neueste Eintrag."""
+    konto = _privatkonto(session, konto_id)
+    if not verlauf:
+        raise BuchhaltungsFehler("Der Statusverlauf braucht mindestens einen Eintrag.")
+    daten = [ab for _, ab in verlauf]
+    if len(set(daten)) != len(daten):
+        raise BuchhaltungsFehler("Pro Tag ist nur ein Statuswechsel möglich.")
+    if max(daten) > date.today():
+        raise BuchhaltungsFehler("Statuswechsel dürfen nicht in der Zukunft liegen.")
+    sortiert = sorted(verlauf, key=lambda eintrag: eintrag[1])
+    konto.statusverlauf.clear()
+    session.flush()  # alte Einträge zuerst entfernen (eindeutiges Datum je Konto)
+    for status, ab in sortiert:
+        konto.statusverlauf.append(Statuswechsel(status=status, gueltig_ab=ab))
+    konto.status = sortiert[-1][0]
+    session.flush()
+    return konto
+
+
+def status_wechseln(session: Session, konto_id: int, status: MitgliedStatus, ab: date) -> Konto:
+    """Trägt einen Statuswechsel ab dem angegebenen Datum ein (gleiches Datum wird überschrieben)."""
+    konto = _privatkonto(session, konto_id)
+    verlauf = [(w.status, w.gueltig_ab) for w in konto.statusverlauf if w.gueltig_ab != ab]
+    if not konto.statusverlauf and konto.status is not None:
+        # Älteres Konto ohne Verlauf: bisherigen Status als Anfang festhalten
+        beginn = konto.eintrittsdatum or date(1900, 1, 1)
+        if beginn < ab:
+            verlauf.append((konto.status, beginn))
+    verlauf.append((status, ab))
+    return statusverlauf_setzen(session, konto_id, verlauf)
 
 
 def _konto(session: Session, konto_id: int) -> Konto:
@@ -335,7 +403,8 @@ def beitrag_vorschau(
     session: Session, betraege: dict[MitgliedStatus, int], jahr: int
 ) -> BeitragVorschau:
     """Fällig sind aktive Mitglieder, die am 01.01. des Jahres schon eingetreten waren
-    und für das Jahr noch keinen Beitrag haben. Betrag je Status in Cent."""
+    und für das Jahr noch keinen Beitrag haben. Betrag je Status in Cent; maßgeblich ist
+    der Status am 01.01. des Jahres (siehe `status_am`)."""
     stichtag = date(jahr, 1, 1)
     schon = _schon_abgebucht(session, jahr)
     mitglieder = session.scalars(
@@ -345,7 +414,7 @@ def beitrag_vorschau(
     )
     faellig, bereits, spaeter, ohne_datum = [], [], [], []
     for m in mitglieder:
-        betrag = betraege.get(m.status, 0)
+        betrag = betraege.get(status_am(m, stichtag), 0)
         if betrag <= 0:
             continue
         if m.eintrittsdatum is None:

@@ -169,7 +169,8 @@ class TestKontoDialog:
         fritz = next(k for k in konten(Sitzung) if k.name == "Fritz")
         d = KontoDialog(None, fritz)
         assert d.werte() == {"name": "Fritz", "typ": KontoTyp.PRIVAT, "status": St.FUX,
-                             "eintrittsdatum": date(2025, 10, 15), "bemerkung": "", "aktiv": True}
+                             "eintrittsdatum": date(2025, 10, 15), "bemerkung": "", "aktiv": True,
+                             "statusverlauf": [(St.FUX, date(2025, 10, 15))]}
         assert not d.typ.isEnabled()
 
     def test_eintrittsdatum_standard_heute(self, app):

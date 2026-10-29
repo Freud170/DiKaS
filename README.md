@@ -43,8 +43,20 @@ Fällig ist, wer **aktiv** ist und am **01.01. des Jahres schon eingetreten** wa
 - wer **kein Eintrittsdatum** hat (ältere Konten – im Konto nachtragen)
 
 Das Buchungsdatum steht standardmäßig auf dem 01.01. des Beitragsjahres, damit nachgeholte
-Beiträge in der Auswertung im richtigen Jahr erscheinen. Es zählt der **aktuelle** Status
-des Mitglieds.
+Beiträge in der Auswertung im richtigen Jahr erscheinen.
+
+### Statusverlauf
+
+Jedes Privatkonto hat einen **Statusverlauf** (z. B. Fux ab 15.10.2023, Aktiver ab
+01.11.2024, Alumni ab …). Beim Anlegen entsteht der erste Eintrag ab Eintrittsdatum; unter
+„Bearbeiten“ lassen sich Statuswechsel mit Datum hinzufügen, korrigieren oder entfernen
+(keine Daten in der Zukunft, höchstens ein Wechsel pro Tag). In der Kontenliste steht der
+aktuelle Status (neuester Eintrag).
+
+Der **Beitragslauf** nimmt den Status, der am **01.01. des Beitragsjahres** galt – auch beim
+Nachholen alter Jahre. Ein Wechsel genau am 01.01. zählt schon für dieses Jahr.
+Ältere Konten ohne Verlauf verwenden den aktuellen Status; der Verlauf beginnt beim ersten
+Statuswechsel.
 
 ### Auswertung
 
@@ -112,6 +124,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_robustheit.py` | Transaktionen (alles oder nichts), Speichern/Neustart, DB-Regeln, Zufallsabläufe, große Mengen, Rundung |
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
 | `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
+| `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geld.py` | Betragseingabe und -anzeige |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
@@ -127,7 +140,7 @@ dikas/
   buchhaltung.py    Fachlogik: Konten, Buchungsarten, Storno, Beitragslauf, Salden
   geld.py           Cent <-> "12,50 €"
   db/
-    models.py       Tabellen (Konto, Buchung)
+    models.py       Tabellen (Konto, Statuswechsel, Buchung)
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung
   ui/
     stil.py         Farben, Stylesheet, Symbole, deutsche Qt-Texte

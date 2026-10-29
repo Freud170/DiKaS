@@ -13,16 +13,19 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QSpinBox,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
-from dikas.buchhaltung import REGELN, BeitragVorschau
+from dikas.buchhaltung import REGELN, BeitragVorschau, status_am
 from dikas.db.models import Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text, text_zu_cent
 from dikas.ui import stil
@@ -56,6 +59,86 @@ def _status_auswahl() -> QComboBox:
     return box
 
 
+class StatusverlaufEditor(QWidget):
+    """Liste der Statuswechsel (Status + gültig ab) mit Hinzufügen/Entfernen."""
+
+    def __init__(self, verlauf: list[tuple[MitgliedStatus, date]], parent=None):
+        super().__init__(parent)
+        self.tabelle = stil.tabelle(["Status", "gültig ab"])
+        self.tabelle.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tabelle.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tabelle.verticalHeader().setDefaultSectionSize(40)
+        self.tabelle.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tabelle.setMinimumHeight(150)
+
+        hinzufuegen = QPushButton("Statuswechsel hinzufügen")
+        hinzufuegen.setAutoDefault(False)
+        hinzufuegen.clicked.connect(self.neuer_wechsel)
+        self.entfernen = QPushButton("Entfernen")
+        self.entfernen.setAutoDefault(False)
+        self.entfernen.clicked.connect(self.ausgewaehlten_entfernen)
+
+        knoepfe = QHBoxLayout()
+        knoepfe.addWidget(hinzufuegen)
+        knoepfe.addWidget(self.entfernen)
+        knoepfe.addStretch()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.tabelle)
+        layout.addLayout(knoepfe)
+
+        for status, ab in sorted(verlauf, key=lambda e: e[1]):
+            self._zeile(status, ab)
+        self._knoepfe_aktualisieren()
+
+    def _zeile(self, status: MitgliedStatus, ab: date):
+        zeile = self.tabelle.rowCount()
+        self.tabelle.insertRow(zeile)
+        auswahl = _status_auswahl()
+        auswahl.setCurrentIndex(auswahl.findData(status))
+        datum = _datum_feld()
+        datum.setMaximumDate(QDate.currentDate())
+        datum.setDate(_qdate(ab))
+        self.tabelle.setCellWidget(zeile, 0, auswahl)
+        self.tabelle.setCellWidget(zeile, 1, datum)
+
+    def neuer_wechsel(self):
+        """Neue Zeile mit dem nächsten Status (Fux → Aktiver → Alumni) ab heute."""
+        reihenfolge = list(MitgliedStatus)
+        letzter = self.werte()[-1][0] if self.tabelle.rowCount() else MitgliedStatus.FUX
+        naechster = reihenfolge[min(reihenfolge.index(letzter) + 1, len(reihenfolge) - 1)]
+        self._zeile(naechster, date.today())
+        self.tabelle.selectRow(self.tabelle.rowCount() - 1)
+        self._knoepfe_aktualisieren()
+
+    def ausgewaehlten_entfernen(self):
+        if self.tabelle.rowCount() <= 1:
+            return
+        zeilen = self.tabelle.selectionModel().selectedRows()
+        self.tabelle.removeRow(zeilen[0].row() if zeilen else self.tabelle.rowCount() - 1)
+        self._knoepfe_aktualisieren()
+
+    def _knoepfe_aktualisieren(self):
+        self.entfernen.setEnabled(self.tabelle.rowCount() > 1)
+
+    def werte(self) -> list[tuple[MitgliedStatus, date]]:
+        return [
+            (self.tabelle.cellWidget(z, 0).currentData(), self.tabelle.cellWidget(z, 1).date().toPython())
+            for z in range(self.tabelle.rowCount())
+        ]
+
+    def fehler(self) -> str | None:
+        daten = [ab for _, ab in self.werte()]
+        if not daten:
+            return "Der Statusverlauf braucht mindestens einen Eintrag."
+        if len(set(daten)) != len(daten):
+            return "Zwei Statuswechsel haben dasselbe Datum."
+        return None
+
+    def aktueller_status(self) -> MitgliedStatus:
+        return max(self.werte(), key=lambda e: e[1])[0]
+
+
 class KontoDialog(QDialog):
     """Neues Konto anlegen (konto=None) oder bestehendes bearbeiten."""
 
@@ -86,11 +169,21 @@ class KontoDialog(QDialog):
         self.aktiv = QCheckBox("Konto ist aktiv")
         self.aktiv.setChecked(konto.aktiv if konto else True)
 
+        # Beim Bearbeiten eines Mitglieds: Statusverlauf statt einzelnem Status
+        self.verlauf: StatusverlaufEditor | None = None
+        if konto and konto.typ == KontoTyp.PRIVAT:
+            eintraege = [(w.status, w.gueltig_ab) for w in konto.statusverlauf]
+            if not eintraege:  # älteres Konto ohne Verlauf
+                eintraege = [(konto.status, konto.eintrittsdatum or date.today())]
+            self.verlauf = StatusverlaufEditor(eintraege)
+
         self.form = stil.formular(QFormLayout(self))
         self.form.addRow("Name:", self.name)
         self.form.addRow("Typ:", self.typ)
         self.form.addRow("Status:", self.status)
         self.form.addRow("Eintrittsdatum:", self.eintritt)
+        if self.verlauf:
+            self.form.addRow("Statusverlauf:", self.verlauf)
         self.form.addRow("Bemerkung:", self.bemerkung)
         if konto:
             self.form.addRow("", self.aktiv)
@@ -98,11 +191,11 @@ class KontoDialog(QDialog):
 
         self.typ.currentIndexChanged.connect(self._typ_geaendert)
         self._typ_geaendert()
-        self.resize(380, self.sizeHint().height())
+        self.resize(460 if self.verlauf else 380, self.sizeHint().height())
 
     def _typ_geaendert(self):
         privat = self.typ.currentData() == KontoTyp.PRIVAT
-        self.form.setRowVisible(self.status, privat)
+        self.form.setRowVisible(self.status, privat and self.verlauf is None)
         self.form.setRowVisible(self.eintritt, privat)
 
     def _pruefen(self):
@@ -112,17 +205,25 @@ class KontoDialog(QDialog):
         if self.typ.currentData() == KontoTyp.PRIVAT and self.eintritt.date() == UNBEKANNT:
             QMessageBox.warning(self, "Fehler", "Bitte ein Eintrittsdatum angeben.")
             return
+        if self.verlauf and (fehler := self.verlauf.fehler()):
+            QMessageBox.warning(self, "Fehler", fehler)
+            return
         self.accept()
 
     def werte(self) -> dict:
         typ = self.typ.currentData()
         privat = typ == KontoTyp.PRIVAT
         eintritt = self.eintritt.date()
+        if self.verlauf:
+            status = self.verlauf.aktueller_status()
+        else:
+            status = self.status.currentData() if privat else None
         return {
             "name": self.name.text(),
             "typ": typ,
-            "status": self.status.currentData() if privat else None,
+            "status": status,
             "eintrittsdatum": eintritt.toPython() if privat and eintritt != UNBEKANNT else None,
+            "statusverlauf": self.verlauf.werte() if self.verlauf else None,
             "bemerkung": self.bemerkung.text(),
             "aktiv": self.aktiv.isChecked(),
         }
@@ -332,7 +433,7 @@ class BeitragDialog(QDialog):
             betrag = QTableWidgetItem(cent_zu_text(cent))
             betrag.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.tabelle.setItem(i, 0, QTableWidgetItem(mitglied.name))
-            self.tabelle.setItem(i, 1, QTableWidgetItem(mitglied.status.anzeige))
+            self.tabelle.setItem(i, 1, QTableWidgetItem(status_am(mitglied, date(jahr, 1, 1)).anzeige))
             self.tabelle.setItem(i, 2, QTableWidgetItem(mitglied.eintrittsdatum.strftime("%d.%m.%Y")))
             self.tabelle.setItem(i, 3, betrag)
         anzahl = f"{len(v.faellig)} Mitglied" + ("" if len(v.faellig) == 1 else "er")

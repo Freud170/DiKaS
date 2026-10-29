@@ -309,7 +309,8 @@ class Hauptfenster(QMainWindow):
         w = dialog.werte()
         self._ausfuehren(
             lambda s: buchhaltung.konto_bearbeiten(
-                s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"], w["eintrittsdatum"]
+                s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"], w["eintrittsdatum"],
+                statusverlauf=w["statusverlauf"],
             )
         )
 

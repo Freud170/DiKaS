@@ -89,7 +89,7 @@ class Konto(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     typ: Mapped[KontoTyp] = mapped_column(Enum(KontoTyp, native_enum=False, length=10))
-    # Nur bei Privatkonten gesetzt
+    # Nur bei Privatkonten gesetzt: aktueller Status (= neuester Eintrag im Statusverlauf)
     status: Mapped[Optional[MitgliedStatus]] = mapped_column(
         Enum(MitgliedStatus, native_enum=False, length=10), default=None
     )
@@ -101,8 +101,34 @@ class Konto(Base):
     bemerkung: Mapped[str] = mapped_column(String(500), default="")
     erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
 
+    # Wird mit dem Konto geladen, damit er auch nach Schließen der Session verfügbar ist
+    statusverlauf: Mapped[list["Statuswechsel"]] = relationship(
+        back_populates="konto",
+        order_by="Statuswechsel.gueltig_ab",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
     def __repr__(self) -> str:
         return f"<Konto {self.id} {self.typ} {self.name!r}>"
+
+
+class Statuswechsel(Base):
+    """Ab wann ein Mitglied welchen Status hatte (Fux → Aktiver → Alumni)."""
+
+    __tablename__ = "statuswechsel"
+    __table_args__ = (UniqueConstraint("konto_id", "gueltig_ab", name="uq_statuswechsel_datum"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    konto_id: Mapped[int] = mapped_column(ForeignKey("konten.id"))
+    status: Mapped[MitgliedStatus] = mapped_column(Enum(MitgliedStatus, native_enum=False, length=10))
+    gueltig_ab: Mapped[date]
+    erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
+
+    konto: Mapped[Konto] = relationship(back_populates="statusverlauf")
+
+    def __repr__(self) -> str:
+        return f"<Statuswechsel {self.konto_id} {self.status} ab {self.gueltig_ab}>"
 
 
 class Buchung(Base):
