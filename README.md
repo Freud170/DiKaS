@@ -133,7 +133,14 @@ py -3.15 -m venv .venv
 ```
 
 Die Datenbank wird beim ersten Start unter `daten\verein.db` angelegt.
-Zum Sichern oder Weitergeben einfach diese Datei kopieren. Neue Spalten aus späteren
+Zum Weitergeben einfach diese Datei kopieren.
+
+**Automatische Sicherung:** Bei jedem Programmstart wird der aktuelle Stand nach
+`daten\sicherung\verein_JJJJ-MM-TT_HH-MM-SS.db` gesichert – nur wenn sich seit der letzten
+Sicherung etwas geändert hat. Es bleiben die **letzten 10 Stände** erhalten. Über
+Schraubenschlüssel → „Sicherungen …“ lassen sie sich ansehen und wiederherstellen (der
+aktuelle Stand wird vorher noch einmal gesichert). Sicherungen bleiben **nur lokal** und
+werden von Git ignoriert. Neue Spalten aus späteren
 Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 `dikas/db/database.py`), vorhandene Daten bleiben dabei unverändert.
 
@@ -153,6 +160,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
 | `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Fehlerfälle, Dialoge |
+| `test_sicherung.py` | Sicherung bei Start, nur bei Änderung, letzte 10, Wiederherstellen, Git-Ignorierung |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geld.py` | Betragseingabe und -anzeige |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
@@ -168,6 +176,7 @@ dikas/
   buchhaltung.py    Fachlogik: Konten, Buchungsarten, Storno, Beitragslauf, Salden
   einstellungen.py  Einstellungen (Mailserver, Bankdaten, Textvorlagen), Anbieter-Vorlagen
   kontoauszug.py    Kontoauszug-Mails erzeugen, per SMTP senden, Versand protokollieren
+  sicherung.py      Automatische lokale Sicherung, letzte 10 Stände, Wiederherstellen
   geld.py           Cent <-> "12,50 €"
   db/
     models.py       Tabellen (Konto, Statuswechsel, Buchung, Einstellung, Mailversand)
@@ -179,6 +188,7 @@ dikas/
     auswertung.py   Auswertung über einen Zeitraum + PDF-Export
     einstellungen_dialog.py  Einstellungen bearbeiten
     versand_dialog.py        Kontoauszüge per E-Mail versenden
+    sicherungen_dialog.py    Sicherungen ansehen und wiederherstellen
     dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests
 ```

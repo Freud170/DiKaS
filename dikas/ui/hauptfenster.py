@@ -1,5 +1,7 @@
 """Hauptfenster: Kennzahlen oben, Kontenübersicht links, Buchungen des gewählten Kontos rechts."""
 
+from pathlib import Path
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QSizePolicy,
     QSplitter,
@@ -27,6 +30,7 @@ from dikas.geld import cent_zu_text
 from dikas.ui import stil
 from dikas.ui.auswertung import AuswertungDialog
 from dikas.ui.einstellungen_dialog import einstellungen_bearbeiten
+from dikas.ui.sicherungen_dialog import SicherungenDialog
 from dikas.ui.versand_dialog import VersandDialog
 from dikas.ui.bausteine import GRAU, Kennzahl, Panel
 from dikas.ui.bausteine import betrag_zelle as _betrag_zelle
@@ -53,6 +57,7 @@ class Hauptfenster(QMainWindow):
     def __init__(self, session_factory: sessionmaker, db_pfad: str):
         super().__init__()
         self.Session = session_factory
+        self.db_pfad = db_pfad
         self.setWindowTitle(f"DiKaS {__version__} – {db_pfad}")
         self.resize(1320, 780)
 
@@ -164,8 +169,16 @@ class Hauptfenster(QMainWindow):
         abstand = QWidget()
         abstand.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         leiste.addWidget(abstand)
-        # Rechts nur ein Symbol (Beschriftung als Tooltip), damit die Leiste nicht überläuft
-        self._aktion(leiste, "Einstellungen", "DocumentProperties", None, self.einstellungen, False, True)
+        # Rechts nur ein Symbol mit Menü, damit die Leiste nicht überläuft
+        menue = QMenu(self)
+        menue.addAction(stil.symbol("DocumentProperties"), "Einstellungen …", self.einstellungen)
+        menue.addAction(stil.symbol("DocumentRevert"), "Sicherungen …", self.sicherungen)
+        self.extras_knopf = QToolButton()
+        self.extras_knopf.setIcon(stil.symbol("DocumentProperties"))
+        self.extras_knopf.setToolTip("Einstellungen und Sicherungen")
+        self.extras_knopf.setMenu(menue)
+        self.extras_knopf.setPopupMode(QToolButton.InstantPopup)
+        leiste.addWidget(self.extras_knopf)
         # Aktualisieren nur per Taste: nach jeder Änderung wird ohnehin neu geladen
         neu_laden = QAction("Aktualisieren", self)
         neu_laden.setShortcut("F5")
@@ -308,6 +321,12 @@ class Hauptfenster(QMainWindow):
     def einstellungen(self):
         if einstellungen_bearbeiten(self.Session, self):
             self.statusBar().showMessage("Einstellungen gespeichert.", 5000)
+
+    def sicherungen(self):
+        dialog = SicherungenDialog(self.Session.kw["bind"], Path(self.db_pfad), self)
+        dialog.exec()
+        if dialog.wiederhergestellt:
+            self.aktualisieren()
 
     def neues_konto(self):
         dialog = KontoDialog(self)
