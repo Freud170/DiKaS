@@ -1,19 +1,43 @@
-"""Fachlogik: Konten anlegen, buchen, stornieren, Salden berechnen.
+"""Fachlogik: Konten anlegen, buchen, stornieren, Beiträge abbuchen, Salden berechnen.
 
-Vorzeichen: Eine Buchung erhöht den Saldo des Zielkontos (nach) und
-verringert den Saldo des Quellkontos (von).
+Gebucht wird immer über eine Buchungsart. Die Regeln in `REGELN` legen fest,
+welche Konten erlaubt sind und welches Konto im Soll bzw. Haben steht.
+Wirkung auf den Saldo siehe `dikas.db.models`.
 """
 
+from dataclasses import dataclass
 from datetime import date
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from dikas.db.models import Buchung, Konto, KontoTyp
+from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus
 
 
 class BuchhaltungsFehler(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ArtRegel:
+    konto_typen: tuple[KontoTyp, ...]
+    # None = Gegenkonto ist automatisch das KW-Konto
+    gegen_typen: tuple[KontoTyp, ...] | None
+    konto_im_soll: bool
+    konto_beschriftung: str
+    gegen_beschriftung: str = ""
+
+
+REGELN: dict[Buchungsart, ArtRegel] = {
+    Buchungsart.EINZAHLUNG: ArtRegel((KontoTyp.PRIVAT,), None, False, "Mitglied"),
+    Buchungsart.AUSZAHLUNG: ArtRegel((KontoTyp.PRIVAT,), None, True, "Mitglied"),
+    Buchungsart.KASSE_EINNAHME: ArtRegel((KontoTyp.KASSE,), None, False, "Kasse"),
+    Buchungsart.KASSE_AUSGABE: ArtRegel((KontoTyp.KASSE,), None, True, "Kasse"),
+    Buchungsart.UMBUCHUNG: ArtRegel(
+        (KontoTyp.PRIVAT, KontoTyp.KASSE), (KontoTyp.PRIVAT, KontoTyp.KASSE), True, "Von", "Nach"
+    ),
+    Buchungsart.BEITRAG: ArtRegel((KontoTyp.PRIVAT,), (KontoTyp.KASSE,), True, "Mitglied", "Kasse"),
+}
 
 
 # --- Konten ---------------------------------------------------------------
@@ -29,51 +53,119 @@ def konten(session: Session, nur_aktive: bool = False) -> list[Konto]:
     return list(session.scalars(abfrage))
 
 
-def konto_anlegen(session: Session, name: str, typ: KontoTyp, bemerkung: str = "") -> Konto:
+def _pruefe_name(session: Session, name: str, typ: KontoTyp, ausser_id: int | None = None) -> str:
     name = name.strip()
     if not name:
         raise BuchhaltungsFehler("Der Kontoname darf nicht leer sein.")
+    abfrage = select(Konto).where(Konto.typ == typ, Konto.name == name)
+    if ausser_id is not None:
+        abfrage = abfrage.where(Konto.id != ausser_id)
+    if session.scalar(abfrage) is not None:
+        raise BuchhaltungsFehler(f"Es gibt bereits ein {typ.anzeige} mit dem Namen „{name}“.")
+    return name
+
+
+def _pruefe_status(typ: KontoTyp, status: MitgliedStatus | None) -> None:
+    if typ == KontoTyp.PRIVAT and status is None:
+        raise BuchhaltungsFehler("Für ein Privatkonto muss ein Status angegeben werden.")
+    if typ != KontoTyp.PRIVAT and status is not None:
+        raise BuchhaltungsFehler("Nur Privatkonten haben einen Status.")
+
+
+def konto_anlegen(
+    session: Session,
+    name: str,
+    typ: KontoTyp,
+    status: MitgliedStatus | None = None,
+    bemerkung: str = "",
+) -> Konto:
     if typ == KontoTyp.KW:
         raise BuchhaltungsFehler("Es gibt genau ein KW-Konto, es wird automatisch angelegt.")
-    vorhanden = session.scalar(select(Konto).where(Konto.typ == typ, Konto.name == name))
-    if vorhanden is not None:
-        raise BuchhaltungsFehler(f"Es gibt bereits ein {typ.anzeige} mit dem Namen „{name}“.")
-    konto = Konto(name=name, typ=typ, bemerkung=bemerkung.strip())
+    name = _pruefe_name(session, name, typ)
+    _pruefe_status(typ, status)
+    konto = Konto(name=name, typ=typ, status=status, bemerkung=bemerkung.strip())
     session.add(konto)
+    session.flush()
+    return konto
+
+
+def konto_bearbeiten(
+    session: Session,
+    konto_id: int,
+    name: str,
+    status: MitgliedStatus | None,
+    bemerkung: str,
+    aktiv: bool,
+) -> Konto:
+    konto = session.get(Konto, konto_id)
+    if konto is None:
+        raise BuchhaltungsFehler(f"Konto {konto_id} existiert nicht.")
+    if konto.typ == KontoTyp.KW and not aktiv:
+        raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
+    konto.name = _pruefe_name(session, name, konto.typ, ausser_id=konto.id)
+    _pruefe_status(konto.typ, status)
+    konto.status = status
+    konto.bemerkung = bemerkung.strip()
+    konto.aktiv = aktiv
     session.flush()
     return konto
 
 
 # --- Buchungen ------------------------------------------------------------
 
+def _aktives_konto(session: Session, konto_id: int, erlaubt: tuple[KontoTyp, ...], rolle: str) -> Konto:
+    konto = session.get(Konto, konto_id)
+    if konto is None:
+        raise BuchhaltungsFehler(f"Konto {konto_id} existiert nicht.")
+    if konto.typ not in erlaubt:
+        erlaubt_text = " oder ".join(t.anzeige for t in erlaubt)
+        raise BuchhaltungsFehler(f"{rolle}: „{konto.name}“ ist kein {erlaubt_text}.")
+    if not konto.aktiv:
+        raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist deaktiviert.")
+    return konto
+
+
 def buchen(
     session: Session,
-    von_konto_id: int,
-    nach_konto_id: int,
+    art: Buchungsart,
+    konto_id: int,
     betrag_cent: int,
     text: str,
     datum: date | None = None,
     beleg: str = "",
+    gegenkonto_id: int | None = None,
 ) -> Buchung:
+    """Bucht nach den Regeln der Buchungsart.
+
+    `gegenkonto_id` wird nur bei Umbuchung und Beitrag gebraucht,
+    sonst ist das Gegenkonto automatisch das KW-Konto.
+    """
+    regel = REGELN.get(art)
+    if regel is None:
+        raise BuchhaltungsFehler(f"„{art.anzeige}“ kann nicht direkt gebucht werden.")
     if betrag_cent <= 0:
         raise BuchhaltungsFehler("Der Betrag muss größer als 0 sein.")
-    if von_konto_id == nach_konto_id:
-        raise BuchhaltungsFehler("Quell- und Zielkonto müssen verschieden sein.")
     text = text.strip()
     if not text:
         raise BuchhaltungsFehler("Bitte einen Buchungstext angeben.")
-    for konto_id in (von_konto_id, nach_konto_id):
-        konto = session.get(Konto, konto_id)
-        if konto is None:
-            raise BuchhaltungsFehler(f"Konto {konto_id} existiert nicht.")
-        if not konto.aktiv:
-            raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist deaktiviert.")
 
+    konto = _aktives_konto(session, konto_id, regel.konto_typen, regel.konto_beschriftung)
+    if regel.gegen_typen is None:
+        gegen = kw_konto(session)
+    else:
+        if gegenkonto_id is None:
+            raise BuchhaltungsFehler(f"Bitte „{regel.gegen_beschriftung}“ angeben.")
+        gegen = _aktives_konto(session, gegenkonto_id, regel.gegen_typen, regel.gegen_beschriftung)
+    if konto.id == gegen.id:
+        raise BuchhaltungsFehler("Die beiden Konten müssen verschieden sein.")
+
+    soll, haben = (konto, gegen) if regel.konto_im_soll else (gegen, konto)
     buchung = Buchung(
         datum=datum or date.today(),
+        art=art,
         betrag_cent=betrag_cent,
-        von_konto_id=von_konto_id,
-        nach_konto_id=nach_konto_id,
+        soll_konto_id=soll.id,
+        haben_konto_id=haben.id,
         text=text,
         beleg=beleg.strip(),
     )
@@ -94,9 +186,10 @@ def stornieren(session: Session, buchung_id: int, datum: date | None = None) -> 
 
     storno = Buchung(
         datum=datum or date.today(),
+        art=Buchungsart.STORNO,
         betrag_cent=original.betrag_cent,
-        von_konto_id=original.nach_konto_id,
-        nach_konto_id=original.von_konto_id,
+        soll_konto_id=original.haben_konto_id,
+        haben_konto_id=original.soll_konto_id,
         text=f"Storno: {original.text}",
         beleg=original.beleg,
         storno_von=original,
@@ -111,45 +204,93 @@ def buchungen(session: Session, konto_id: int | None = None) -> list[Buchung]:
     abfrage = (
         select(Buchung)
         .options(
-            joinedload(Buchung.von_konto),
-            joinedload(Buchung.nach_konto),
+            joinedload(Buchung.soll_konto),
+            joinedload(Buchung.haben_konto),
             joinedload(Buchung.storniert_durch),
         )
         .order_by(Buchung.datum.desc(), Buchung.id.desc())
     )
     if konto_id is not None:
         abfrage = abfrage.where(
-            or_(Buchung.von_konto_id == konto_id, Buchung.nach_konto_id == konto_id)
+            or_(Buchung.soll_konto_id == konto_id, Buchung.haben_konto_id == konto_id)
         )
     return list(session.scalars(abfrage).unique())
+
+
+# --- Beiträge -------------------------------------------------------------
+
+def beitrag_vorschau(
+    session: Session, betraege: dict[MitgliedStatus, int]
+) -> list[tuple[Konto, int]]:
+    """Alle aktiven Mitglieder, die nach `betraege` (Cent je Status) etwas zahlen."""
+    mitglieder = session.scalars(
+        select(Konto)
+        .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv)
+        .order_by(Konto.status, Konto.name)
+    )
+    return [(m, betraege.get(m.status, 0)) for m in mitglieder if betraege.get(m.status, 0) > 0]
+
+
+def beitraege_abbuchen(
+    session: Session,
+    betraege: dict[MitgliedStatus, int],
+    kasse_id: int,
+    text: str,
+    datum: date | None = None,
+) -> list[Buchung]:
+    """Bucht den Beitrag je Status von allen aktiven Mitgliedern auf die Kasse.
+
+    Läuft in der Transaktion des Aufrufers: Bei einem Fehler wird nichts gebucht.
+    """
+    if any(b < 0 for b in betraege.values()):
+        raise BuchhaltungsFehler("Beiträge dürfen nicht negativ sein.")
+    vorschau = beitrag_vorschau(session, betraege)
+    if not vorschau:
+        raise BuchhaltungsFehler("Es gibt keine Mitglieder, für die ein Beitrag fällig ist.")
+    return [
+        buchen(session, Buchungsart.BEITRAG, m.id, betrag, text, datum, gegenkonto_id=kasse_id)
+        for m, betrag in vorschau
+    ]
 
 
 # --- Salden ---------------------------------------------------------------
 
 def salden(session: Session) -> dict[int, int]:
     """Saldo in Cent für jedes Konto (auch Konten ohne Buchungen)."""
-    ergebnis = {konto_id: 0 for konto_id in session.scalars(select(Konto.id))}
-    zugang = select(Buchung.nach_konto_id, func.sum(Buchung.betrag_cent)).group_by(
-        Buchung.nach_konto_id
+    typen = dict(session.execute(select(Konto.id, Konto.typ)).all())
+    soll = dict(
+        session.execute(
+            select(Buchung.soll_konto_id, func.sum(Buchung.betrag_cent)).group_by(Buchung.soll_konto_id)
+        ).all()
     )
-    abgang = select(Buchung.von_konto_id, func.sum(Buchung.betrag_cent)).group_by(
-        Buchung.von_konto_id
+    haben = dict(
+        session.execute(
+            select(Buchung.haben_konto_id, func.sum(Buchung.betrag_cent)).group_by(Buchung.haben_konto_id)
+        ).all()
     )
-    for konto_id, summe in session.execute(zugang):
-        ergebnis[konto_id] += summe
-    for konto_id, summe in session.execute(abgang):
-        ergebnis[konto_id] -= summe
+    ergebnis = {}
+    for konto_id, typ in typen.items():
+        differenz = soll.get(konto_id, 0) - haben.get(konto_id, 0)
+        ergebnis[konto_id] = differenz if typ.ist_aktivkonto else -differenz
     return ergebnis
 
 
 def saldo(session: Session, konto_id: int) -> int:
-    betrag = case(
-        (Buchung.nach_konto_id == konto_id, Buchung.betrag_cent),
-        else_=-Buchung.betrag_cent,
-    )
-    summe = session.scalar(
-        select(func.coalesce(func.sum(betrag), 0)).where(
-            or_(Buchung.von_konto_id == konto_id, Buchung.nach_konto_id == konto_id)
-        )
-    )
-    return int(summe)
+    return salden(session)[konto_id]
+
+
+@dataclass(frozen=True)
+class Abstimmung:
+    kw_cent: int
+    verteilt_cent: int  # Summe aller Privatkonten und Kassen
+
+    @property
+    def stimmt(self) -> bool:
+        return self.kw_cent == self.verteilt_cent
+
+
+def abstimmung(session: Session) -> Abstimmung:
+    """Kontrolle: KW-Konto muss der Summe aller Privatkonten und Kassen entsprechen."""
+    werte = salden(session)
+    kw_id = kw_konto(session).id
+    return Abstimmung(werte[kw_id], sum(v for k, v in werte.items() if k != kw_id))

@@ -5,17 +5,42 @@ Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
 
 ## Konzept
 
-- **Privatkonten**: eins pro Mitglied
+- **Privatkonten**: eins pro Mitglied, mit Status **Fux**, **Aktiver** oder **Alumni**
 - **Kassen**: beliebig viele, getrennt geführt
 - **KW-Konto**: genau eins, bildet den tatsächlichen liquiden Bestand ab (wird automatisch angelegt)
 
-Gebucht wird nach dem Prinzip der **doppelten Buchführung**: Jede Buchung geht
-*von* einem Konto *nach* einem anderen. Der Saldo des Zielkontos steigt, der des
-Quellkontos sinkt. Die Summe aller Salden ist damit immer 0.
+### Doppelte Buchführung (Soll/Haben)
+
+- Das **KW-Konto** ist das Geld, das tatsächlich da ist (Aktivkonto: Soll = Plus).
+- **Privatkonten und Kassen** zeigen, wem dieses Geld zusteht (Passivkonten: Haben = Plus).
+- Kontrollregel (unten rechts in der Statusleiste): **KW = Summe aller Privatkonten + Kassen**.
+
+Gebucht wird über **Buchungsarten**, Soll und Haben setzt das Programm selbst:
+
+| Buchungsart | Wirkung |
+|---|---|
+| Einzahlung | Mitglied zahlt ein: Privatkonto +, KW + |
+| Auszahlung | Mitglied bekommt Geld: Privatkonto −, KW − |
+| Kassen-Einnahme | Kasse +, KW + |
+| Kassen-Ausgabe | Kasse −, KW − |
+| Umbuchung | zwischen Privatkonten/Kassen: Von −, Nach +, KW unverändert |
+| Beitrag | Privatkonto −, Kasse +, KW unverändert |
+| Storno | Gegenbuchung zu einer bestehenden Buchung |
+
+Ein Privatkonto im Minus heißt: Das Mitglied schuldet dem Verein noch etwas.
+
+### Beitragslauf
+
+„Beiträge abbuchen“: Betrag je Status (Füxe / Aktive / Alumni) eintragen und die
+Zielkasse wählen. Nach Vorschau und Bestätigung wird für jedes aktive Mitglied eine
+Beitragsbuchung angelegt. Bei einem Fehler wird gar nichts gebucht.
+
+### Regeln
 
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
 - Beträge werden in Cent (Ganzzahl) gespeichert.
 - Buchungen werden nie gelöscht, sondern **storniert** (automatische Gegenbuchung).
+- Konten werden nicht gelöscht, sondern deaktiviert.
 
 ## Technik
 
@@ -53,19 +78,20 @@ Zum Sichern oder Weitergeben einfach diese Datei kopieren.
 ```
 dikas/
   app.py            Programmstart
-  buchhaltung.py    Fachlogik: Konten, Buchungen, Storno, Salden
+  buchhaltung.py    Fachlogik: Konten, Buchungsarten, Storno, Beitragslauf, Salden
   geld.py           Cent <-> "12,50 €"
   db/
     models.py       Tabellen (Konto, Buchung)
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung
   ui/
     hauptfenster.py Kontenübersicht + Buchungsliste
-    dialoge.py      Dialoge "Neues Konto" / "Neue Buchung"
+    dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests
 ```
 
 ## Geplant
 
-- Konkrete Buchungsarten (Beispiele folgen)
+- Weitere Buchungsfälle (Beispiele folgen)
+- DB-Migrationen (Alembic), sobald echte Daten vorhanden sind
 - Export/Import der Daten zwischen PCs
 - Weitergabe als `.exe` per PyInstaller

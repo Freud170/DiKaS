@@ -1,6 +1,10 @@
-"""Datenmodell: doppelte Buchführung.
+"""Datenmodell: doppelte Buchführung mit Soll und Haben.
 
-Jede Buchung bewegt einen Betrag von einem Konto auf ein anderes.
+Kontoarten:
+- KW-Konto (Aktivkonto): das tatsächlich vorhandene Geld. Soll = Plus, Haben = Minus.
+- Privatkonten und Kassen (Passivkonten): wem das Geld „gehört“. Haben = Plus, Soll = Minus.
+
+Dadurch gilt immer: Saldo KW = Summe aller Privatkonten und Kassen.
 Kontostände werden nie gespeichert, sondern immer aus den Buchungen berechnet.
 Beträge werden in Cent (int) gespeichert, um Rundungsfehler zu vermeiden.
 """
@@ -26,14 +30,64 @@ class KontoTyp(enum.StrEnum):
     def anzeige(self) -> str:
         return {"PRIVAT": "Privatkonto", "KASSE": "Kasse", "KW": "KW-Konto"}[self.value]
 
+    @property
+    def ist_aktivkonto(self) -> bool:
+        """Aktivkonten steigen im Soll, alle anderen im Haben."""
+        return self is KontoTyp.KW
+
+
+class MitgliedStatus(enum.StrEnum):
+    FUX = "FUX"
+    AKTIVER = "AKTIVER"
+    ALUMNI = "ALUMNI"
+
+    @property
+    def anzeige(self) -> str:
+        return {"FUX": "Fux", "AKTIVER": "Aktiver", "ALUMNI": "Alumni"}[self.value]
+
+    @property
+    def mehrzahl(self) -> str:
+        return {"FUX": "Füxe", "AKTIVER": "Aktive", "ALUMNI": "Alumni"}[self.value]
+
+
+class Buchungsart(enum.StrEnum):
+    EINZAHLUNG = "EINZAHLUNG"  # Mitglied zahlt Geld ein (KW +, Privat +)
+    AUSZAHLUNG = "AUSZAHLUNG"  # Mitglied bekommt Geld ausgezahlt (KW -, Privat -)
+    KASSE_EINNAHME = "KASSE_EINNAHME"  # Kasse nimmt Geld ein (KW +, Kasse +)
+    KASSE_AUSGABE = "KASSE_AUSGABE"  # Kasse gibt Geld aus (KW -, Kasse -)
+    UMBUCHUNG = "UMBUCHUNG"  # zwischen Privatkonten/Kassen, KW unverändert
+    BEITRAG = "BEITRAG"  # Mitgliedsbeitrag: Privat -, Kasse +
+    STORNO = "STORNO"  # Gegenbuchung zu einer anderen Buchung
+
+    @property
+    def anzeige(self) -> str:
+        return {
+            "EINZAHLUNG": "Einzahlung",
+            "AUSZAHLUNG": "Auszahlung",
+            "KASSE_EINNAHME": "Kassen-Einnahme",
+            "KASSE_AUSGABE": "Kassen-Ausgabe",
+            "UMBUCHUNG": "Umbuchung",
+            "BEITRAG": "Beitrag",
+            "STORNO": "Storno",
+        }[self.value]
+
 
 class Konto(Base):
     __tablename__ = "konten"
-    __table_args__ = (UniqueConstraint("typ", "name", name="uq_konto_typ_name"),)
+    __table_args__ = (
+        UniqueConstraint("typ", "name", name="uq_konto_typ_name"),
+        CheckConstraint(
+            "(typ = 'PRIVAT') = (status IS NOT NULL)", name="ck_status_nur_privat"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     typ: Mapped[KontoTyp] = mapped_column(Enum(KontoTyp, native_enum=False, length=10))
+    # Nur bei Privatkonten gesetzt
+    status: Mapped[Optional[MitgliedStatus]] = mapped_column(
+        Enum(MitgliedStatus, native_enum=False, length=10), default=None
+    )
     aktiv: Mapped[bool] = mapped_column(default=True)
     bemerkung: Mapped[str] = mapped_column(String(500), default="")
     erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
@@ -46,14 +100,15 @@ class Buchung(Base):
     __tablename__ = "buchungen"
     __table_args__ = (
         CheckConstraint("betrag_cent > 0", name="ck_betrag_positiv"),
-        CheckConstraint("von_konto_id <> nach_konto_id", name="ck_konten_verschieden"),
+        CheckConstraint("soll_konto_id <> haben_konto_id", name="ck_konten_verschieden"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     datum: Mapped[date]
+    art: Mapped[Buchungsart] = mapped_column(Enum(Buchungsart, native_enum=False, length=20))
     betrag_cent: Mapped[int]
-    von_konto_id: Mapped[int] = mapped_column(ForeignKey("konten.id"))
-    nach_konto_id: Mapped[int] = mapped_column(ForeignKey("konten.id"))
+    soll_konto_id: Mapped[int] = mapped_column(ForeignKey("konten.id"))
+    haben_konto_id: Mapped[int] = mapped_column(ForeignKey("konten.id"))
     text: Mapped[str] = mapped_column(String(200))
     beleg: Mapped[str] = mapped_column(String(50), default="")
     erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
@@ -62,8 +117,8 @@ class Buchung(Base):
         ForeignKey("buchungen.id"), unique=True, default=None
     )
 
-    von_konto: Mapped[Konto] = relationship(foreign_keys=[von_konto_id])
-    nach_konto: Mapped[Konto] = relationship(foreign_keys=[nach_konto_id])
+    soll_konto: Mapped[Konto] = relationship(foreign_keys=[soll_konto_id])
+    haben_konto: Mapped[Konto] = relationship(foreign_keys=[haben_konto_id])
     storno_von: Mapped[Optional["Buchung"]] = relationship(
         remote_side=[id], back_populates="storniert_durch"
     )
@@ -77,5 +132,19 @@ class Buchung(Base):
     def ist_storno(self) -> bool:
         return self.storno_von_id is not None
 
+    def wirkung_auf(self, konto: Konto) -> int:
+        """Veränderung des Saldos von `konto` durch diese Buchung (in Cent)."""
+        if konto.id == self.soll_konto_id:
+            im_soll = True
+        elif konto.id == self.haben_konto_id:
+            im_soll = False
+        else:
+            return 0
+        steigt = im_soll == konto.typ.ist_aktivkonto
+        return self.betrag_cent if steigt else -self.betrag_cent
+
     def __repr__(self) -> str:
-        return f"<Buchung {self.id} {self.datum} {self.betrag_cent}ct {self.von_konto_id}->{self.nach_konto_id}>"
+        return (
+            f"<Buchung {self.id} {self.datum} {self.art} {self.betrag_cent}ct "
+            f"S{self.soll_konto_id}/H{self.haben_konto_id}>"
+        )
