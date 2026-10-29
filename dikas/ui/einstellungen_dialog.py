@@ -61,7 +61,7 @@ class EinstellungenDialog(QDialog):
         self.absender_name = QLineEdit(e.absender_name)
         self.absender_name.setPlaceholderText("z. B. Max Mustermann (Kassenwart)")
         self.absender_email = QLineEdit(e.absender_email)
-        self.absender_email.setPlaceholderText("name@gmail.com")
+        self.absender_email.setPlaceholderText("name@beispiel.de")
         self.anbieter_hinweis = _hinweis()
 
         form = stil.formular(QFormLayout())

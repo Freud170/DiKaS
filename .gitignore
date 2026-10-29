@@ -9,16 +9,31 @@ daten/
 *.db-shm
 *.sqlite
 *.sqlite3
+*.bak
 export/
+exporte/
 backup/
+sicherung/
 *.csv
+*.xls
 *.xlsx
+*.ods
 *.pdf
+*.eml
+*.msg
+*.zip
+*.7z
+*.log
 
 # Umgebungen / Geheimnisse
 .venv/
 venv/
 .env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Python-Build-Artefakte
 __pycache__/

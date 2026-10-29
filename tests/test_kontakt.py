@@ -26,7 +26,7 @@ class TestLogik:
         tom = mitglied(session)
         assert (tom.bierspitz, tom.email) == ("", "")
 
-    @pytest.mark.parametrize("email", ["tom@example.org", "t.b+verein@mail.example.de", "a@b.co"])
+    @pytest.mark.parametrize("email", ["tom@example.org", "t.b+verein@mail.example.de", "a@b.example"])
     def test_gueltige_adressen(self, session, email):
         assert mitglied(session, email=email).email == email
 
@@ -149,7 +149,7 @@ class TestHauptfenster:
     def fenster(self, app, engine):
         with Session(engine) as s, s.begin():
             mitglied(s, "Tom Becker", bierspitz="Tommy", email="tom@example.org")
-            mitglied(s, "Anna Schulz", bierspitz="Ännchen", email="anna@verein.de")
+            mitglied(s, "Anna Schulz", bierspitz="Ännchen", email="anna@verein.example")
         w = Hauptfenster(sessionmaker(engine, expire_on_commit=False), "test")
         yield w
         w.close()
@@ -163,7 +163,7 @@ class TestHauptfenster:
         assert t.item(zeile, 1).text() == "Tommy"
 
     @pytest.mark.parametrize("suche, erwartet", [
-        ("tommy", {"Tom Becker"}), ("ÄNNCHEN", {"Anna Schulz"}), ("verein.de", {"Anna Schulz"}),
+        ("tommy", {"Tom Becker"}), ("ÄNNCHEN", {"Anna Schulz"}), ("verein.example", {"Anna Schulz"}),
         ("schulz", {"Anna Schulz"}),
     ])
     def test_suche(self, fenster, suche, erwartet):

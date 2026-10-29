@@ -28,8 +28,8 @@ D = date
 STICHTAG = D(2026, 12, 31)
 
 EINST = es.Einstellungen(
-    smtp_anbieter="Gmail", smtp_benutzer="kasse@gmail.com",
-    absender_name="Rico (Kassenwart)", absender_email="kasse@gmail.com",
+    smtp_anbieter="Gmail", smtp_benutzer="kassenwart@example.com",
+    absender_name="Max (Kassenwart)", absender_email="kassenwart@example.com",
     kontoinhaber="Verein e. V.", iban="DE02120300000000202051", bic="BYLADEM1001", bank="DKB",
 )
 
@@ -198,7 +198,7 @@ class TestAuszug:
         assert a.art == "offen"
         assert a.betreff == "Dein Kontostand zum 31.12.2026"
         for teil in ("Hallo Tommy,", "-45,50 €", "offenen Betrag von 45,50 €", "DE02120300000000202051",
-                     "Verein e. V.", "BYLADEM1001", "Ausgleich Privatkonto Tom Becker", "Rico (Kassenwart)"):
+                     "Verein e. V.", "BYLADEM1001", "Ausgleich Privatkonto Tom Becker", "Max (Kassenwart)"):
             assert teil in a.text
 
     def test_positiv_auf_mich_zukommen(self, mitglieder):
@@ -227,10 +227,10 @@ class TestAuszug:
     def test_als_email(self, mitglieder):
         n = ka.als_email(self._auszug(mitglieder["schulden"], -100), EINST)
         assert n["To"] == "schulden@example.org"
-        assert "Rico (Kassenwart)" in n["From"] and "kasse@gmail.com" in n["From"]
+        assert "Max (Kassenwart)" in n["From"] and "kassenwart@example.com" in n["From"]
         assert n["Message-ID"]
-        test = ka.als_email(self._auszug(mitglieder["schulden"], -100), EINST, an="ich@x.de", betreff_zusatz="[TEST] ")
-        assert test["To"] == "ich@x.de" and test["Subject"].startswith("[TEST] ")
+        test = ka.als_email(self._auszug(mitglieder["schulden"], -100), EINST, an="ich@example.net", betreff_zusatz="[TEST] ")
+        assert test["To"] == "ich@example.net" and test["Subject"].startswith("[TEST] ")
 
 
 class TestEmpfaenger:
@@ -301,7 +301,7 @@ class TestVersand:
         verbinder = FalscherVerbinder()
         (a,) = auszuege(session, mitglieder, "schulden")
         ka.testmail_senden(a, EINST, "x", verbinder)
-        assert verbinder.gesendet[0]["To"] == "kasse@gmail.com"
+        assert verbinder.gesendet[0]["To"] == "kassenwart@example.com"
         assert verbinder.gesendet[0]["Subject"].startswith("[TEST]")
         assert session.scalars(select(Mailversand)).all() == []
 
@@ -319,7 +319,7 @@ class TestEchterSmtpServer:
         text = schulden.get_content()
         assert "Hallo Tommy," in text and "DE02120300000000202051" in text and "45,50 €" in text
         assert "Gut gewirtschaftet! 🍻" in null.get_content()  # Emoji und Umlaute korrekt
-        assert "Rico (Kassenwart)" in str(schulden["From"])
+        assert "Max (Kassenwart)" in str(schulden["From"])
 
     def test_falsches_passwort(self, smtp_server):
         smtp_server.passwort_ok = False
@@ -375,7 +375,7 @@ class TestVerbindungsarten:
     def test_starttls(self, protokoll):
         ka.verbinden(EINST, "pw")
         assert protokoll == [("SMTP", "smtp.gmail.com", 587), "ehlo", "starttls", "ehlo",
-                             ("login", "kasse@gmail.com", "pw")]
+                             ("login", "kassenwart@example.com", "pw")]
 
     def test_ssl(self, protokoll):
         ka.verbinden(replace(EINST, smtp_server="smtp.strato.de", smtp_port=465, smtp_verschluesselung=es.SSL), "pw")
@@ -421,15 +421,15 @@ class TestEinstellungenDialog:
         assert (w.smtp_server, w.smtp_port, w.smtp_verschluesselung) == (server, port, art)
 
     def test_eigener_server_behaelt_werte(self, app):
-        e = replace(EINST, smtp_anbieter=es.EIGENER_SERVER, smtp_server="mail.verein.de", smtp_port=2525)
+        e = replace(EINST, smtp_anbieter=es.EIGENER_SERVER, smtp_server="mail.verein.example", smtp_port=2525)
         d = EinstellungenDialog(e)
-        assert (d.server.text(), d.port.value()) == ("mail.verein.de", 2525)
+        assert (d.server.text(), d.port.value()) == ("mail.verein.example", 2525)
         d.anbieter.setCurrentText(es.EIGENER_SERVER)
-        assert d.server.text() == "mail.verein.de"
+        assert d.server.text() == "mail.verein.example"
 
     def test_benutzer_standard_ist_absender(self, app):
         d = EinstellungenDialog(replace(EINST, smtp_benutzer=""))
-        assert d.werte().smtp_benutzer == "kasse@gmail.com"
+        assert d.werte().smtp_benutzer == "kassenwart@example.com"
 
     @pytest.mark.parametrize("feld, wert, meldung", [
         ("absender_email", "kaputt", "E-Mail"),
@@ -554,7 +554,7 @@ class TestVersandDialog:
     def test_testmail(self, dialog, verbinder, meldungen):
         dialog.tabelle.selectRow(self.zeile(dialog, "Tom Becker"))
         dialog.testmail()
-        assert verbinder.gesendet[0]["To"] == "kasse@gmail.com"
+        assert verbinder.gesendet[0]["To"] == "kassenwart@example.com"
         assert "Tom Becker" in meldungen[-1][1]
 
     def test_teilweise_fehlgeschlagen(self, app, Sitzung, meldungen):
