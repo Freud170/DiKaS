@@ -77,18 +77,27 @@ def _pruefe_status(typ: KontoTyp, status: MitgliedStatus | None) -> None:
         raise BuchhaltungsFehler("Nur Privatkonten haben einen Status.")
 
 
+def _pruefe_eintritt(typ: KontoTyp, eintrittsdatum: date | None) -> None:
+    if typ != KontoTyp.PRIVAT and eintrittsdatum is not None:
+        raise BuchhaltungsFehler("Nur Privatkonten haben ein Eintrittsdatum.")
+
+
 def konto_anlegen(
     session: Session,
     name: str,
     typ: KontoTyp,
     status: MitgliedStatus | None = None,
     bemerkung: str = "",
+    eintrittsdatum: date | None = None,
 ) -> Konto:
     if typ == KontoTyp.KW:
         raise BuchhaltungsFehler("Es gibt genau ein KW-Konto, es wird automatisch angelegt.")
     name = _pruefe_name(session, name, typ)
     _pruefe_status(typ, status)
-    konto = Konto(name=name, typ=typ, status=status, bemerkung=bemerkung.strip())
+    _pruefe_eintritt(typ, eintrittsdatum)
+    konto = Konto(
+        name=name, typ=typ, status=status, bemerkung=bemerkung.strip(), eintrittsdatum=eintrittsdatum
+    )
     session.add(konto)
     session.flush()
     return konto
@@ -101,7 +110,9 @@ def konto_bearbeiten(
     status: MitgliedStatus | None,
     bemerkung: str,
     aktiv: bool,
+    eintrittsdatum: date | None = None,
 ) -> Konto:
+    """Ändert ein Konto. `eintrittsdatum=None` lässt das bisherige Datum unverändert."""
     konto = _konto(session, konto_id)
     if konto.geloescht:
         raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen.")
@@ -109,9 +120,12 @@ def konto_bearbeiten(
         raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
     konto.name = _pruefe_name(session, name, konto.typ, ausser_id=konto.id)
     _pruefe_status(konto.typ, status)
+    _pruefe_eintritt(konto.typ, eintrittsdatum)
     konto.status = status
     konto.bemerkung = bemerkung.strip()
     konto.aktiv = aktiv
+    if eintrittsdatum is not None:
+        konto.eintrittsdatum = eintrittsdatum
     session.flush()
     return konto
 
@@ -255,6 +269,7 @@ def stornieren(session: Session, buchung_id: int, datum: date | None = None) -> 
         haben_konto_id=original.soll_konto_id,
         text=f"Storno: {original.text}",
         beleg=original.beleg,
+        beitragsjahr=original.beitragsjahr,
         storno_von=original,
     )
     session.add(storno)
@@ -291,38 +306,89 @@ def buchungen(
 
 # --- Beiträge -------------------------------------------------------------
 
+@dataclass(frozen=True)
+class BeitragVorschau:
+    """Wer im Beitragslauf für ein Jahr zahlt – und wer warum nicht."""
+
+    jahr: int
+    faellig: list[tuple[Konto, int]]  # Mitglied, Betrag in Cent
+    bereits_abgebucht: list[Konto]  # hat für das Jahr schon einen (nicht stornierten) Beitrag
+    spaeter_eingetreten: list[Konto]  # Eintritt nach dem 01.01. des Jahres
+    ohne_eintrittsdatum: list[Konto]
+
+    @property
+    def summe(self) -> int:
+        return sum(betrag for _, betrag in self.faellig)
+
+
+def _schon_abgebucht(session: Session, jahr: int) -> set[int]:
+    """IDs der Mitglieder, die für `jahr` bereits einen gültigen Beitrag haben."""
+    beitraege = session.scalars(
+        select(Buchung)
+        .options(joinedload(Buchung.storniert_durch))
+        .where(Buchung.art == Buchungsart.BEITRAG, Buchung.beitragsjahr == jahr)
+    ).unique()
+    return {b.soll_konto_id for b in beitraege if not b.ist_storniert}
+
+
 def beitrag_vorschau(
-    session: Session, betraege: dict[MitgliedStatus, int]
-) -> list[tuple[Konto, int]]:
-    """Alle aktiven Mitglieder, die nach `betraege` (Cent je Status) etwas zahlen."""
+    session: Session, betraege: dict[MitgliedStatus, int], jahr: int
+) -> BeitragVorschau:
+    """Fällig sind aktive Mitglieder, die am 01.01. des Jahres schon eingetreten waren
+    und für das Jahr noch keinen Beitrag haben. Betrag je Status in Cent."""
+    stichtag = date(jahr, 1, 1)
+    schon = _schon_abgebucht(session, jahr)
     mitglieder = session.scalars(
         select(Konto)
         .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv, ~Konto.geloescht)
         .order_by(Konto.status, Konto.name)
     )
-    return [(m, betraege.get(m.status, 0)) for m in mitglieder if betraege.get(m.status, 0) > 0]
+    faellig, bereits, spaeter, ohne_datum = [], [], [], []
+    for m in mitglieder:
+        betrag = betraege.get(m.status, 0)
+        if betrag <= 0:
+            continue
+        if m.eintrittsdatum is None:
+            ohne_datum.append(m)
+        elif m.eintrittsdatum > stichtag:
+            spaeter.append(m)
+        elif m.id in schon:
+            bereits.append(m)
+        else:
+            faellig.append((m, betrag))
+    return BeitragVorschau(jahr, faellig, bereits, spaeter, ohne_datum)
 
 
 def beitraege_abbuchen(
     session: Session,
     betraege: dict[MitgliedStatus, int],
+    jahr: int,
     kasse_id: int,
     text: str,
     datum: date | None = None,
 ) -> list[Buchung]:
-    """Bucht den Beitrag je Status von allen aktiven Mitgliedern auf die Kasse.
+    """Bucht den Jahresbeitrag je Status für alle fälligen Mitglieder (siehe `beitrag_vorschau`).
 
+    Ohne Datum wird auf den 01.01. des Jahres gebucht.
     Läuft in der Transaktion des Aufrufers: Bei einem Fehler wird nichts gebucht.
     """
     if any(b < 0 for b in betraege.values()):
         raise BuchhaltungsFehler("Beiträge dürfen nicht negativ sein.")
-    vorschau = beitrag_vorschau(session, betraege)
-    if not vorschau:
-        raise BuchhaltungsFehler("Es gibt keine Mitglieder, für die ein Beitrag fällig ist.")
-    return [
-        buchen(session, Buchungsart.BEITRAG, m.id, betrag, text, datum, gegenkonto_id=kasse_id)
-        for m, betrag in vorschau
-    ]
+    if not 1900 <= jahr <= 2200:
+        raise BuchhaltungsFehler(f"Ungültiges Beitragsjahr: {jahr}")
+    vorschau = beitrag_vorschau(session, betraege, jahr)
+    if not vorschau.faellig:
+        raise BuchhaltungsFehler(f"Es gibt keine Mitglieder, für die ein Beitrag {jahr} fällig ist.")
+    gebucht = []
+    for m, betrag in vorschau.faellig:
+        b = buchen(
+            session, Buchungsart.BEITRAG, m.id, betrag, text, datum or date(jahr, 1, 1),
+            gegenkonto_id=kasse_id,
+        )
+        b.beitragsjahr = jahr
+        gebucht.append(b)
+    session.flush()
+    return gebucht
 
 
 # --- Salden ---------------------------------------------------------------

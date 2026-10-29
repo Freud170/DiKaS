@@ -44,9 +44,27 @@ def erstelle_engine(pfad: Path | str | None = None) -> Engine:
     return engine
 
 
+# Spalten, die nach dem ersten Einsatz dazugekommen sind: werden in bestehenden
+# Datenbanken beim Start ergänzt (vorhandene Daten bleiben unverändert).
+NACHTRAEGLICHE_SPALTEN = {
+    "konten": {"eintrittsdatum": "DATE"},
+    "buchungen": {"beitragsjahr": "INTEGER"},
+}
+
+
+def _ergaenze_spalten(engine: Engine) -> None:
+    with engine.begin() as conn:
+        for tabelle, spalten in NACHTRAEGLICHE_SPALTEN.items():
+            vorhanden = {zeile[1] for zeile in conn.exec_driver_sql(f"PRAGMA table_info({tabelle})")}
+            for name, typ in spalten.items():
+                if name not in vorhanden:
+                    conn.exec_driver_sql(f"ALTER TABLE {tabelle} ADD COLUMN {name} {typ}")
+
+
 def init_db(engine: Engine) -> None:
-    """Legt fehlende Tabellen an und stellt sicher, dass es das KW-Konto gibt."""
+    """Legt fehlende Tabellen/Spalten an und stellt sicher, dass es das KW-Konto gibt."""
     Base.metadata.create_all(engine)
+    _ergaenze_spalten(engine)
     with Session(engine) as session, session.begin():
         kw = session.scalar(select(Konto).where(Konto.typ == KontoTyp.KW))
         if kw is None:

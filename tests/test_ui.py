@@ -1,13 +1,16 @@
 """Oberflächentests (laufen ohne sichtbares Fenster)."""
 
+from datetime import date
+
 import pytest
+from PySide6.QtCore import QDate
 from PySide6.QtWidgets import QApplication, QMessageBox
 from sqlalchemy.orm import sessionmaker
 
 from dikas import buchhaltung as bh
 from dikas.db.models import Buchungsart as Art, KontoTyp, MitgliedStatus as St
 from dikas.ui import stil
-from dikas.ui.dialoge import BeitragDialog, BuchungDialog, KontoDialog
+from dikas.ui.dialoge import UNBEKANNT, BeitragDialog, BuchungDialog, KontoDialog
 from dikas.ui.hauptfenster import Hauptfenster
 
 
@@ -32,9 +35,9 @@ def Sitzung(engine):
     with Sitzung.begin() as s:
         bh.konto_anlegen(s, "Beitragskasse", KontoTyp.KASSE)
         bh.konto_anlegen(s, "Getränkekasse", KontoTyp.KASSE)
-        tom = bh.konto_anlegen(s, "Tom", KontoTyp.PRIVAT, St.AKTIVER)
-        bh.konto_anlegen(s, "Fritz", KontoTyp.PRIVAT, St.FUX)
-        bh.konto_anlegen(s, "Alfred", KontoTyp.PRIVAT, St.ALUMNI)
+        tom = bh.konto_anlegen(s, "Tom", KontoTyp.PRIVAT, St.AKTIVER, eintrittsdatum=date(2020, 10, 1))
+        bh.konto_anlegen(s, "Fritz", KontoTyp.PRIVAT, St.FUX, eintrittsdatum=date(2025, 10, 15))
+        bh.konto_anlegen(s, "Alfred", KontoTyp.PRIVAT, St.ALUMNI, eintrittsdatum=date(1990, 4, 1))
         bh.buchen(s, Art.EINZAHLUNG, tom.id, 1000, "Überweisung")
     return Sitzung
 
@@ -64,8 +67,8 @@ class TestHauptfenster:
     def test_zeigt_alle_konten_und_salden(self, fenster):
         t = fenster.konten_tabelle
         assert t.rowCount() == 6
-        assert t.item(zeile_von(t, "Tom"), 3).text() == "10,00 €"
-        assert t.item(zeile_von(t, "KW"), 3).text() == "10,00 €"
+        assert t.item(zeile_von(t, "Tom"), 4).text() == "10,00 €"
+        assert t.item(zeile_von(t, "KW"), 4).text() == "10,00 €"
         assert t.item(zeile_von(t, "Fritz"), 2).text() == "Fux"
 
     def test_abstimmung_in_statusleiste(self, fenster):
@@ -104,7 +107,7 @@ class TestHauptfenster:
         fenster.buchungen_tabelle.selectRow(0)
         fenster.storniere_auswahl()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Tom"), 3).text() == "0,00 €"
+        assert t.item(zeile_von(t, "Tom"), 4).text() == "0,00 €"
         assert fenster.buchungen_tabelle.rowCount() == 2
         status = {fenster.buchungen_tabelle.item(r, 7).text() for r in range(2)}
         assert status == {"storniert", ""}
@@ -140,7 +143,7 @@ class TestHauptfenster:
             bh.buchen(s, Art.BEITRAG, ids["Fritz"], 3000, "Beitrag", gegenkonto_id=ids["Beitragskasse"])
         fenster.aktualisieren()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Fritz"), 3).foreground().color().name() == stil.NEGATIV
+        assert t.item(zeile_von(t, "Fritz"), 4).foreground().color().name() == stil.NEGATIV
 
 
 # --- Konto-Dialog ---------------------------------------------------------
@@ -166,8 +169,33 @@ class TestKontoDialog:
         fritz = next(k for k in konten(Sitzung) if k.name == "Fritz")
         d = KontoDialog(None, fritz)
         assert d.werte() == {"name": "Fritz", "typ": KontoTyp.PRIVAT, "status": St.FUX,
-                             "bemerkung": "", "aktiv": True}
+                             "eintrittsdatum": date(2025, 10, 15), "bemerkung": "", "aktiv": True}
         assert not d.typ.isEnabled()
+
+    def test_eintrittsdatum_standard_heute(self, app):
+        assert KontoDialog().werte()["eintrittsdatum"] == date.today()
+
+    def test_eintrittsdatum_nur_bei_privatkonto(self, app):
+        d = KontoDialog()
+        d.typ.setCurrentIndex(d.typ.findData(KontoTyp.KASSE))
+        assert not d.form.isRowVisible(d.eintritt)
+        assert d.werte()["eintrittsdatum"] is None
+
+    def test_konto_ohne_eintrittsdatum_zeigt_unbekannt(self, app, Sitzung):
+        with Sitzung.begin() as s:
+            bh.konto_anlegen(s, "Alt", KontoTyp.PRIVAT, St.AKTIVER)
+        alt = next(k for k in konten(Sitzung) if k.name == "Alt")
+        d = KontoDialog(None, alt)
+        assert d.eintritt.text() == "unbekannt"
+        assert d.werte()["eintrittsdatum"] is None
+
+    def test_eintrittsdatum_pflicht(self, app, Sitzung, keine_meldungen):
+        d = KontoDialog()
+        d.name.setText("Neu")
+        d.eintritt.setDate(UNBEKANNT)
+        d._pruefen()
+        assert d.result() != KontoDialog.Accepted
+        assert "Eintrittsdatum" in keine_meldungen[-1]
 
 
 # --- Buchungs-Dialog ------------------------------------------------------
@@ -233,18 +261,16 @@ class TestBuchungDialog:
         assert d.werte()["gegenkonto_id"] is None
 
 
-# --- Beitrags-Dialog ------------------------------------------------------
-
 class TestBeitragDialog:
     @pytest.fixture
     def dialog(self, app, Sitzung):
         kassen = [k for k in konten(Sitzung) if k.typ == KontoTyp.KASSE]
 
-        def vorschau(betraege):
+        def vorschau(betraege, jahr):
             with Sitzung() as s:
-                return bh.beitrag_vorschau(s, betraege)
+                return bh.beitrag_vorschau(s, betraege, jahr)
 
-        return BeitragDialog(kassen, vorschau)
+        return BeitragDialog(kassen, vorschau, heute=date(2026, 10, 29))
 
     def test_vorschau_aktualisiert_sich(self, dialog):
         assert dialog.tabelle.rowCount() == 0
@@ -264,16 +290,48 @@ class TestBeitragDialog:
         assert dialog.result() != BeitragDialog.Accepted
         assert "kein Mitglied" in keine_meldungen[-1]
 
-    def test_buchungstext_vorbelegt(self, dialog):
-        assert dialog.text.text().startswith("Jahresbeitrag ")
+    def test_standard_aktuelles_jahr(self, dialog):
+        assert dialog.jahr.value() == 2026
+        assert dialog.text.text() == "Jahresbeitrag 2026"
+        assert dialog.datum.date() == QDate(2026, 1, 1)
+        assert "2026" in dialog.vorschau_titel.text()
+
+    def test_jahreswechsel_passt_datum_und_text_an(self, dialog):
+        dialog.jahr.setValue(2024)
+        assert dialog.text.text() == "Jahresbeitrag 2024"
+        assert dialog.datum.date() == QDate(2024, 1, 1)
+
+    def test_eigener_text_bleibt_bei_jahreswechsel(self, dialog):
+        dialog.text.setText("Beitrag Nachzahlung")
+        dialog.jahr.setValue(2024)
+        assert dialog.text.text() == "Beitrag Nachzahlung"
+
+    def test_spaeter_eingetretene_werden_ausgelassen(self, dialog):
+        dialog.felder[St.FUX].setText("30")
+        dialog.felder[St.AKTIVER].setText("60")
+        dialog.jahr.setValue(2025)  # Fritz erst am 15.10.2025 eingetreten
+        namen = [dialog.tabelle.item(r, 0).text() for r in range(dialog.tabelle.rowCount())]
+        assert namen == ["Tom"]
+        assert "Erst nach dem 01.01.2025 eingetreten" in dialog.ausgelassen.text()
+        assert "Fritz" in dialog.ausgelassen.text()
+
+    def test_bereits_abgebuchte_werden_angezeigt(self, dialog, Sitzung):
+        with Sitzung.begin() as s:
+            kasse = next(k for k in bh.konten(s) if k.name == "Beitragskasse")
+            bh.beitraege_abbuchen(s, {St.AKTIVER: 6000}, 2026, kasse.id, "Beitrag")
+        dialog.felder[St.AKTIVER].setText("60")
+        assert dialog.tabelle.rowCount() == 0
+        assert "Bereits für 2026 abgebucht" in dialog.ausgelassen.text()
 
     def test_kompletter_beitragslauf(self, dialog, Sitzung):
+        dialog.jahr.setValue(2025)
         dialog.felder[St.FUX].setText("30")
         dialog.felder[St.AKTIVER].setText("60")
         dialog.kasse.setCurrentIndex(dialog.kasse.findText("Beitragskasse"))
         dialog._pruefen()
         assert dialog.result() == BeitragDialog.Accepted
+        assert dialog.werte()["jahr"] == 2025
         with Sitzung.begin() as s:
             gebucht = bh.beitraege_abbuchen(s, **dialog.werte())
-            assert len(gebucht) == 2
+            assert [(b.beitragsjahr, b.datum) for b in gebucht] == [(2025, date(2025, 1, 1))]
             assert bh.abstimmung(s).stimmt

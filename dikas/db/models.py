@@ -93,6 +93,8 @@ class Konto(Base):
     status: Mapped[Optional[MitgliedStatus]] = mapped_column(
         Enum(MitgliedStatus, native_enum=False, length=10), default=None
     )
+    # Nur bei Privatkonten; entscheidet, ab welchem Jahr Beiträge fällig sind
+    eintrittsdatum: Mapped[Optional[date]] = mapped_column(default=None)
     aktiv: Mapped[bool] = mapped_column(default=True)
     # Archiviert: Saldo war 0, Konto hat aber Buchungen und bleibt deshalb erhalten
     geloescht: Mapped[bool] = mapped_column(default=False)
@@ -119,6 +121,8 @@ class Buchung(Base):
     text: Mapped[str] = mapped_column(String(200))
     beleg: Mapped[str] = mapped_column(String(50), default="")
     erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
+    # Bei Beiträgen aus dem Beitragslauf: für welches Jahr (verhindert doppelte Abbuchung)
+    beitragsjahr: Mapped[Optional[int]] = mapped_column(default=None)
     # Gesetzt, wenn diese Buchung die Stornobuchung einer anderen ist
     storno_von_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("buchungen.id"), unique=True, default=None

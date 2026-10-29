@@ -31,9 +31,20 @@ Ein Privatkonto im Minus heißt: Das Mitglied schuldet dem Verein noch etwas.
 
 ### Beitragslauf
 
-„Beiträge abbuchen“: Betrag je Status (Füxe / Aktive / Alumni) eintragen und die
-Zielkasse wählen. Nach Vorschau und Bestätigung wird für jedes aktive Mitglied eine
-Beitragsbuchung angelegt. Bei einem Fehler wird gar nichts gebucht.
+„Beiträge abbuchen“: **Beitragsjahr** wählen, Betrag je Status (Füxe / Aktive / Alumni)
+eintragen und die Zielkasse wählen. Nach Vorschau und Bestätigung wird für jedes fällige
+Mitglied eine Beitragsbuchung angelegt. Bei einem Fehler wird gar nichts gebucht.
+
+Fällig ist, wer **aktiv** ist und am **01.01. des Jahres schon eingetreten** war
+(Eintrittsdatum im Privatkonto). Ausgelassen – und in der Vorschau aufgelistet – werden:
+
+- wer für das Jahr **schon einen Beitrag** hat (Schutz vor Doppelabbuchung; ein Storno gibt das Jahr wieder frei)
+- wer **erst später eingetreten** ist
+- wer **kein Eintrittsdatum** hat (ältere Konten – im Konto nachtragen)
+
+Das Buchungsdatum steht standardmäßig auf dem 01.01. des Beitragsjahres, damit nachgeholte
+Beiträge in der Auswertung im richtigen Jahr erscheinen. Es zählt der **aktuelle** Status
+des Mitglieds.
 
 ### Auswertung
 
@@ -84,7 +95,9 @@ py -3.15 -m venv .venv
 ```
 
 Die Datenbank wird beim ersten Start unter `daten\verein.db` angelegt.
-Zum Sichern oder Weitergeben einfach diese Datei kopieren.
+Zum Sichern oder Weitergeben einfach diese Datei kopieren. Neue Spalten aus späteren
+Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
+`dikas/db/database.py`), vorhandene Daten bleiben dabei unverändert.
 
 ## Tests
 
@@ -98,6 +111,7 @@ Zum Sichern oder Weitergeben einfach diese Datei kopieren.
 | `test_szenarien.py` | Vereinsalltag: Beiträge, Raten, Überzahlung, Strichliste, Auslagen, Feste, Spenden, Korrekturen, Austritt, ein komplettes Vereinsjahr |
 | `test_robustheit.py` | Transaktionen (alles oder nichts), Speichern/Neustart, DB-Regeln, Zufallsabläufe, große Mengen, Rundung |
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
+| `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geld.py` | Betragseingabe und -anzeige |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
@@ -127,6 +141,5 @@ tests/              pytest-Tests
 ## Geplant
 
 - Weitere Buchungsfälle (Beispiele folgen)
-- DB-Migrationen (Alembic), sobald echte Daten vorhanden sind
 - Export/Import der Daten zwischen PCs
 - Weitergabe als `.exe` per PyInstaller

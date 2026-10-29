@@ -28,7 +28,7 @@ class TestTransaktionen:
         with Sitzung.begin() as s:
             kasse = bh.konto_anlegen(s, "Beitragskasse", KontoTyp.KASSE).id
             for n in ("A", "B", "C"):
-                bh.konto_anlegen(s, n, KontoTyp.PRIVAT, St.AKTIVER)
+                bh.konto_anlegen(s, n, KontoTyp.PRIVAT, St.AKTIVER, eintrittsdatum=date(2020, 1, 1))
 
         original = bh.buchen
 
@@ -40,7 +40,7 @@ class TestTransaktionen:
         monkeypatch.setattr(bh, "buchen", buchen_mit_fehler)
         with pytest.raises(bh.BuchhaltungsFehler, match="Simulierter"):
             with Sitzung.begin() as s:
-                bh.beitraege_abbuchen(s, {St.AKTIVER: 6000}, kasse, "Beitrag")
+                bh.beitraege_abbuchen(s, {St.AKTIVER: 6000}, 2026, kasse, "Beitrag")
 
         with Sitzung() as s:
             assert anzahl_buchungen(s) == 0
@@ -180,7 +180,9 @@ def test_zufaellige_ablaeufe_bleiben_stimmig(session, seed):
         elif aktion == 5:
             gebucht.append(v.beitrag(rnd.choice(mitglieder), rnd.choice(kassen), betrag))
         elif aktion == 6 and schritt % 25 == 0:
-            gebucht += v.beitragslauf(rnd.choice(kassen), fux="30", aktiver="60", alumni="100")
+            gebucht += v.beitragslauf(
+                rnd.choice(kassen), fux="30", aktiver="60", alumni="100", jahr=2000 + schritt
+            )
         elif aktion == 7:
             offen = [b for b in gebucht if not b.ist_storno and not b.ist_storniert]
             if offen:

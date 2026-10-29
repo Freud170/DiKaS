@@ -75,7 +75,9 @@ class Hauptfenster(QMainWindow):
         self.filter = QComboBox()
         self.filter.addItems(KONTEN_FILTER)
         self.filter.currentIndexChanged.connect(self.aktualisieren)
-        self.konten_tabelle = self._neue_tabelle(["Konto", "Typ", "Status", "Saldo"], rechts=[3])
+        self.konten_tabelle = self._neue_tabelle(
+            ["Konto", "Typ", "Status", "Eintritt", "Saldo"], rechts=[4]
+        )
         self.konten_tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.konten_tabelle.itemSelectionChanged.connect(self.lade_buchungen)
         self.konten_tabelle.itemDoubleClicked.connect(self.konto_bearbeiten)
@@ -199,6 +201,7 @@ class Hauptfenster(QMainWindow):
                 _zelle(konto.name, daten=konto.id),
                 _zelle(konto.typ.anzeige),
                 _zelle(konto.status.anzeige if konto.status else ""),
+                _zelle(konto.eintrittsdatum.strftime("%d.%m.%Y") if konto.eintrittsdatum else ""),
                 _betrag_zelle(salden[konto.id], fett=True),
             ]
             for spalte, item in enumerate(werte):
@@ -290,7 +293,9 @@ class Hauptfenster(QMainWindow):
             return
         w = dialog.werte()
         self._ausfuehren(
-            lambda s: buchhaltung.konto_anlegen(s, w["name"], w["typ"], w["status"], w["bemerkung"])
+            lambda s: buchhaltung.konto_anlegen(
+                s, w["name"], w["typ"], w["status"], w["bemerkung"], w["eintrittsdatum"]
+            )
         )
 
     def konto_bearbeiten(self):
@@ -304,7 +309,7 @@ class Hauptfenster(QMainWindow):
         w = dialog.werte()
         self._ausfuehren(
             lambda s: buchhaltung.konto_bearbeiten(
-                s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"]
+                s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"], w["eintrittsdatum"]
             )
         )
 
@@ -357,9 +362,9 @@ class Hauptfenster(QMainWindow):
             QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Kasse für die Beiträge anlegen.")
             return
 
-        def vorschau(betraege):
+        def vorschau(betraege, jahr):
             with self.Session() as session:
-                return buchhaltung.beitrag_vorschau(session, betraege)
+                return buchhaltung.beitrag_vorschau(session, betraege, jahr)
 
         dialog = BeitragDialog(kassen, vorschau, self)
         if dialog.exec() != BeitragDialog.Accepted:

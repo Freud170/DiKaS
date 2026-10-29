@@ -122,14 +122,14 @@ QHeaderView::section {{
 }}
 
 /* Eingabefelder */
-QLineEdit, QComboBox, QDateEdit {{
+QLineEdit, QComboBox, QDateEdit, QSpinBox {{
     background: {FLAECHE};
     border: 1px solid #cfd5dd;
     border-radius: 6px;
     padding: 5px 8px;
     min-height: 20px;
 }}
-QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QSpinBox:focus {{
     border: 1px solid {AKZENT};
 }}
 QComboBox::drop-down, QDateEdit::drop-down {{

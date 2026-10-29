@@ -41,8 +41,8 @@ class Verein:
     def kw(self) -> Konto:
         return bh.kw_konto(self.s)
 
-    def mitglied(self, name: str, status: St = St.AKTIVER) -> Konto:
-        return bh.konto_anlegen(self.s, name, KontoTyp.PRIVAT, status)
+    def mitglied(self, name: str, status: St = St.AKTIVER, eintritt: date | None = date(2000, 1, 1)) -> Konto:
+        return bh.konto_anlegen(self.s, name, KontoTyp.PRIVAT, status, eintrittsdatum=eintritt)
 
     def kasse(self, name: str) -> Konto:
         return bh.konto_anlegen(self.s, name, KontoTyp.KASSE)
@@ -71,9 +71,9 @@ class Verein:
     def beitrag(self, m, kasse, betrag, text="", datum: date | None = None):
         return self._buche(Art.BEITRAG, m, betrag, text, datum, gegen=kasse)
 
-    def beitragslauf(self, kasse, fux="0", aktiver="0", alumni="0", text="Jahresbeitrag", datum=None):
+    def beitragslauf(self, kasse, fux="0", aktiver="0", alumni="0", text="Jahresbeitrag", datum=None, jahr=2026):
         betraege = {St.FUX: ct(fux), St.AKTIVER: ct(aktiver), St.ALUMNI: ct(alumni)}
-        return bh.beitraege_abbuchen(self.s, betraege, kasse.id, text, datum)
+        return bh.beitraege_abbuchen(self.s, betraege, jahr, kasse.id, text, datum)
 
     def storno(self, buchung):
         return bh.stornieren(self.s, buchung.id)

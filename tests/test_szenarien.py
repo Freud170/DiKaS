@@ -122,25 +122,32 @@ class TestBeitraege:
     def test_statuswechsel_zwischen_zwei_beitragslaeufen(self, verein, session):
         kasse = verein.kasse("Beitragskasse")
         fritz = verein.mitglied("Fritz", St.FUX)
-        verein.beitragslauf(kasse, fux="30", aktiver="60", alumni="20", datum=date(2026, 1, 1))
+        verein.beitragslauf(kasse, fux="30", aktiver="60", alumni="20", jahr=2026)
 
         bh.konto_bearbeiten(session, fritz.id, "Fritz", St.AKTIVER, "", True)  # Burschung
-        verein.beitragslauf(kasse, fux="30", aktiver="60", alumni="20", datum=date(2027, 1, 1))
+        verein.beitragslauf(kasse, fux="30", aktiver="60", alumni="20", jahr=2027)
 
         bh.konto_bearbeiten(session, fritz.id, "Fritz", St.ALUMNI, "", True)  # Philistrierung
-        verein.beitragslauf(kasse, fux="30", aktiver="60", alumni="20", datum=date(2028, 1, 1))
+        verein.beitragslauf(kasse, fux="30", aktiver="60", alumni="20", jahr=2028)
 
         assert verein.saldo(fritz) == ct("-110")
         verein.pruefe_abstimmung()
 
-    def test_versehentlich_doppelter_beitragslauf_wird_storniert(self, verein):
+    def test_doppelter_beitragslauf_wird_verhindert(self, verein):
         kasse = verein.kasse("Beitragskasse")
         mitglieder = [verein.mitglied(n) for n in ("A", "B", "C")]
         verein.beitragslauf(kasse, aktiver="60")
-        doppelt = verein.beitragslauf(kasse, aktiver="60")
+        with pytest.raises(bh.BuchhaltungsFehler, match="2026"):
+            verein.beitragslauf(kasse, aktiver="60")
+        assert all(verein.saldo(m) == ct("-60") for m in mitglieder)
 
-        for b in doppelt:
+    def test_falscher_beitragslauf_storniert_und_neu(self, verein):
+        kasse = verein.kasse("Beitragskasse")
+        mitglieder = [verein.mitglied(n) for n in ("A", "B", "C")]
+        falsch = verein.beitragslauf(kasse, aktiver="600")  # Tippfehler
+        for b in falsch:
             verein.storno(b)
+        verein.beitragslauf(kasse, aktiver="60")
 
         assert all(verein.saldo(m) == ct("-60") for m in mitglieder)
         assert verein.saldo(kasse) == ct("180")
@@ -161,7 +168,7 @@ class TestBeitraege:
         kasse = verein.kasse("Beitragskasse")
         verein.mitglied("Tom")
         with pytest.raises(bh.BuchhaltungsFehler):
-            bh.beitraege_abbuchen(session, {St.AKTIVER: -100}, kasse.id, "Beitrag")
+            bh.beitraege_abbuchen(session, {St.AKTIVER: -100}, 2026, kasse.id, "Beitrag")
 
     def test_beitragslauf_auf_deaktivierte_kasse(self, verein):
         kasse = verein.kasse("Alte Kasse")

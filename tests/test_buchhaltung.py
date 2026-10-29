@@ -6,6 +6,9 @@ from dikas import buchhaltung as bh
 from dikas.db.models import Buchungsart as Art, KontoTyp, MitgliedStatus as St
 
 
+EINTRITT = date(2020, 10, 1)
+
+
 @pytest.fixture
 def konten(session):
     """KW, zwei Kassen und je ein Mitglied pro Status."""
@@ -13,9 +16,9 @@ def konten(session):
         "kw": bh.kw_konto(session),
         "beitrag": bh.konto_anlegen(session, "Beitragskasse", KontoTyp.KASSE),
         "getraenke": bh.konto_anlegen(session, "Getränkekasse", KontoTyp.KASSE),
-        "tom": bh.konto_anlegen(session, "Tom", KontoTyp.PRIVAT, St.AKTIVER),
-        "fritz": bh.konto_anlegen(session, "Fritz", KontoTyp.PRIVAT, St.FUX),
-        "alfred": bh.konto_anlegen(session, "Alfred", KontoTyp.PRIVAT, St.ALUMNI),
+        "tom": bh.konto_anlegen(session, "Tom", KontoTyp.PRIVAT, St.AKTIVER, eintrittsdatum=EINTRITT),
+        "fritz": bh.konto_anlegen(session, "Fritz", KontoTyp.PRIVAT, St.FUX, eintrittsdatum=EINTRITT),
+        "alfred": bh.konto_anlegen(session, "Alfred", KontoTyp.PRIVAT, St.ALUMNI, eintrittsdatum=EINTRITT),
     }
 
 
@@ -161,18 +164,19 @@ def test_buchungen_filter(session, konten):
 # --- Beitragslauf ---------------------------------------------------------
 
 def test_beitraege_abbuchen(session, konten):
-    bh.konto_anlegen(session, "Ehemalig", KontoTyp.PRIVAT, St.AKTIVER).aktiv = False
+    bh.konto_anlegen(session, "Ehemalig", KontoTyp.PRIVAT, St.AKTIVER, eintrittsdatum=EINTRITT).aktiv = False
     betraege = {St.FUX: 3000, St.AKTIVER: 6000, St.ALUMNI: 0}
 
-    vorschau = bh.beitrag_vorschau(session, betraege)
-    assert sorted((k.name, c) for k, c in vorschau) == [("Fritz", 3000), ("Tom", 6000)]
+    vorschau = bh.beitrag_vorschau(session, betraege, 2026)
+    assert sorted((k.name, c) for k, c in vorschau.faellig) == [("Fritz", 3000), ("Tom", 6000)]
+    assert vorschau.summe == 9000
 
     gebucht = bh.beitraege_abbuchen(
-        session, betraege, konten["beitrag"].id, "Jahresbeitrag 2026", date(2026, 11, 1)
+        session, betraege, 2026, konten["beitrag"].id, "Jahresbeitrag 2026", date(2026, 11, 1)
     )
 
     assert len(gebucht) == 2
-    assert all(b.art == Art.BEITRAG for b in gebucht)
+    assert all(b.art == Art.BEITRAG and b.beitragsjahr == 2026 for b in gebucht)
     salden = bh.salden(session)
     assert salden[konten["fritz"].id] == -3000
     assert salden[konten["tom"].id] == -6000
@@ -184,9 +188,9 @@ def test_beitraege_abbuchen(session, konten):
 
 def test_beitraege_ohne_faellige_mitglieder(session, konten):
     with pytest.raises(bh.BuchhaltungsFehler):
-        bh.beitraege_abbuchen(session, {}, konten["beitrag"].id, "Beitrag")
+        bh.beitraege_abbuchen(session, {}, 2026, konten["beitrag"].id, "Beitrag")
 
 
 def test_beitraege_nur_auf_kasse(session, konten):
     with pytest.raises(bh.BuchhaltungsFehler):
-        bh.beitraege_abbuchen(session, {St.FUX: 100}, konten["kw"].id, "Beitrag")
+        bh.beitraege_abbuchen(session, {St.FUX: 100}, 2026, konten["kw"].id, "Beitrag")
