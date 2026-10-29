@@ -98,8 +98,10 @@ STANDARD_VERWENDUNGSZWECK = "Ausgleich Privatkonto {name}"
 
 # Platzhalter, die in Betreff, Texten und Verwendungszweck erlaubt sind
 PLATZHALTER = {
-    "anrede": "Bierspitz, falls vorhanden, sonst der Name",
-    "name": "Name des Mitglieds",
+    "anrede": "Bierspitz, falls vorhanden, sonst der Vorname",
+    "name": "Vor- und Nachname des Mitglieds",
+    "vorname": "Vorname",
+    "nachname": "Nachname",
     "bierspitz": "Bierspitz (kann leer sein)",
     "stichtag": "Stichtag, z. B. 31.12.2026",
     "saldo": "Kontostand mit Vorzeichen, z. B. -45,00 €",

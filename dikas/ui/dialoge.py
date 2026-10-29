@@ -147,6 +147,8 @@ class KontoDialog(QDialog):
         self.setWindowTitle("Konto bearbeiten" if konto else "Neues Konto")
 
         self.name = QLineEdit(konto.name if konto else "")
+        self.vorname = QLineEdit(konto.vorname if konto else "")
+        self.nachname = QLineEdit(konto.nachname if konto else "")
         self.typ = QComboBox()
         if konto:
             self.typ.addItem(konto.typ.anzeige, konto.typ)
@@ -182,8 +184,10 @@ class KontoDialog(QDialog):
             self.verlauf = StatusverlaufEditor(eintraege)
 
         self.form = stil.formular(QFormLayout(self))
-        self.form.addRow("Name:", self.name)
         self.form.addRow("Typ:", self.typ)
+        self.form.addRow("Name:", self.name)
+        self.form.addRow("Vorname:", self.vorname)
+        self.form.addRow("Nachname:", self.nachname)
         self.form.addRow("Bierspitz:", self.bierspitz)
         self.form.addRow("E-Mail:", self.email)
         self.form.addRow("Status:", self.status)
@@ -202,14 +206,21 @@ class KontoDialog(QDialog):
     def _typ_geaendert(self):
         privat = self.typ.currentData() == KontoTyp.PRIVAT
         self.form.setRowVisible(self.status, privat and self.verlauf is None)
-        for feld in (self.eintritt, self.bierspitz, self.email):
+        self.form.setRowVisible(self.name, not privat)
+        for feld in (self.vorname, self.nachname, self.eintritt, self.bierspitz, self.email):
             self.form.setRowVisible(feld, privat)
 
     def _pruefen(self):
-        if not self.name.text().strip():
+        privat = self.typ.currentData() == KontoTyp.PRIVAT
+        if privat:
+            for feld, bezeichnung in ((self.vorname, "Vornamen"), (self.nachname, "Nachnamen")):
+                if not feld.text().strip():
+                    QMessageBox.warning(self, "Fehler", f"Bitte einen {bezeichnung} angeben.")
+                    return
+        elif not self.name.text().strip():
             QMessageBox.warning(self, "Fehler", "Bitte einen Namen angeben.")
             return
-        if self.typ.currentData() == KontoTyp.PRIVAT:
+        if privat:
             # E-Mail ist optional (kann nachgetragen werden), muss aber gültig sein, wenn angegeben
             email = self.email.text().strip()
             if email and not EMAIL_MUSTER.match(email):
@@ -231,8 +242,11 @@ class KontoDialog(QDialog):
             status = self.verlauf.aktueller_status()
         else:
             status = self.status.currentData() if privat else None
+        vorname, nachname = self.vorname.text().strip(), self.nachname.text().strip()
         return {
-            "name": self.name.text(),
+            "name": f"{vorname} {nachname}".strip() if privat else self.name.text(),
+            "vorname": vorname if privat else None,
+            "nachname": nachname if privat else None,
             "typ": typ,
             "status": status,
             "eintrittsdatum": eintritt.toPython() if privat and eintritt != UNBEKANNT else None,

@@ -219,7 +219,7 @@ class Hauptfenster(QMainWindow):
             abstimmung = buchhaltung.abstimmung(session)
         konten = sorted(
             (k for k in alle if passt(k) and suchtext in f"{k.name} {k.bierspitz} {k.email}".lower()),
-            key=lambda k: (k.typ.reihenfolge, k.name.lower()),
+            key=lambda k: (k.typ.reihenfolge, (k.nachname or k.name).lower(), k.vorname.lower()),
         )
 
         self.konten_tabelle.setRowCount(len(konten))
@@ -336,7 +336,7 @@ class Hauptfenster(QMainWindow):
         self._ausfuehren(
             lambda s: buchhaltung.konto_anlegen(
                 s, w["name"], w["typ"], w["status"], w["bemerkung"], w["eintrittsdatum"],
-                bierspitz=w["bierspitz"], email=w["email"],
+                bierspitz=w["bierspitz"], email=w["email"], vorname=w["vorname"], nachname=w["nachname"],
             )
         )
 
@@ -353,6 +353,7 @@ class Hauptfenster(QMainWindow):
             lambda s: buchhaltung.konto_bearbeiten(
                 s, konto_id, w["name"], w["status"], w["bemerkung"], w["aktiv"], w["eintrittsdatum"],
                 statusverlauf=w["statusverlauf"], bierspitz=w["bierspitz"], email=w["email"],
+                vorname=w["vorname"], nachname=w["nachname"],
             )
         )
 

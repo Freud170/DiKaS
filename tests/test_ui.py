@@ -171,7 +171,7 @@ class TestKontoDialog:
         d = KontoDialog(None, fritz)
         assert d.werte() == {"name": "Fritz", "typ": KontoTyp.PRIVAT, "status": St.FUX,
                              "eintrittsdatum": date(2025, 10, 15), "bemerkung": "", "aktiv": True,
-                             "statusverlauf": [(St.FUX, date(2025, 10, 15))],
+                             "statusverlauf": [(St.FUX, date(2025, 10, 15))], "vorname": "", "nachname": "Fritz",
                              "bierspitz": "Fritze", "email": "fritz@example.org"}
         assert not d.typ.isEnabled()
 
@@ -194,7 +194,8 @@ class TestKontoDialog:
 
     def test_eintrittsdatum_pflicht(self, app, Sitzung, keine_meldungen):
         d = KontoDialog()
-        d.name.setText("Neu")
+        d.vorname.setText("Neu")
+        d.nachname.setText("Mitglied")
         d.email.setText("neu@example.org")
         d.eintritt.setDate(UNBEKANNT)
         d._pruefen()

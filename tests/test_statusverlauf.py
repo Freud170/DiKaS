@@ -265,8 +265,8 @@ class TestKontoDialogMitVerlauf:
     @pytest.fixture
     def tom(self, engine):
         with Session(engine, expire_on_commit=False) as s, s.begin():
-            tom = bh.konto_anlegen(s, "Tom", KontoTyp.PRIVAT, St.FUX, eintrittsdatum=D(2024, 10, 15),
-                                   email="tom@example.org")
+            tom = bh.konto_anlegen(s, "", KontoTyp.PRIVAT, St.FUX, eintrittsdatum=D(2024, 10, 15),
+                                   email="tom@example.org", vorname="Tom", nachname="Becker")
             bh.status_wechseln(s, tom.id, St.AKTIVER, D(2025, 11, 1))
         with sessionmaker(engine)() as s:
             return s.get(Konto, tom.id)  # Verlauf wird mitgeladen

@@ -167,7 +167,8 @@ class TestEinstellungen:
     @pytest.mark.parametrize("vorlage, ok", [
         ("Hallo {anrede}, {saldo} zum {stichtag}", True),
         ("Ohne Platzhalter", True),
-        ("Hallo {vorname}", False),
+        ("Hallo {spitzname}", False),
+        ("Hallo {vorname} {nachname}", True),
         ("Kaputt {", False),
         ("Kaputt }", False),
     ])
@@ -213,8 +214,8 @@ class TestAuszug:
         assert a.art == "ausgeglichen"
         assert "Gut gewirtschaftet" in a.text
 
-    def test_anrede_ohne_bierspitz_ist_name(self, mitglieder):
-        assert "Hallo Anna Schulz," in self._auszug(mitglieder["guthaben"], 1).text
+    def test_anrede_ohne_bierspitz_ist_vorname(self, mitglieder):
+        assert "Hallo Anna," in self._auszug(mitglieder["guthaben"], 1).text
 
     def test_eigene_vorlagen(self, mitglieder):
         e = replace(EINST, betreff="Kasse {stichtag}: {saldo}", text_negativ="Zahl {betrag}, {bierspitz}!",
@@ -247,7 +248,7 @@ class TestEmpfaenger:
         bh.konto_loeschen(session, weg.id)
         namen = [k.name for k, _ in ka.empfaenger_liste(session, STICHTAG)]
         assert "Beitragskasse" not in namen and "KW" not in namen and "Gelöscht" not in namen
-        assert namen == sorted(namen)
+        assert namen == sorted(namen, key=lambda n: n.split()[-1])  # nach Nachname
 
     def test_salden_bis(self, session, mitglieder):
         assert bh.salden(session, bis=D(2025, 12, 31))[mitglieder["schulden"].id] == 0

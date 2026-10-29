@@ -12,6 +12,7 @@ from datetime import date
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
+from dikas.db.database import teile_namen
 from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus, Statuswechsel
 from dikas.geld import cent_zu_text
 
@@ -71,6 +72,26 @@ def _pruefe_name(session: Session, name: str, typ: KontoTyp, ausser_id: int | No
     return name
 
 
+def _namensteile(
+    typ: KontoTyp, name: str, vorname: str | None, nachname: str | None
+) -> tuple[str, str, str]:
+    """(Anzeigename, Vorname, Nachname).
+
+    Privatkonten: Anzeigename = "Vorname Nachname". Ohne Vor-/Nachname wird `name` aufgeteilt
+    (letztes Wort = Nachname). Andere Konten haben nur einen Namen.
+    """
+    if typ != KontoTyp.PRIVAT:
+        if vorname or nachname:
+            raise BuchhaltungsFehler("Nur Privatkonten haben Vor- und Nachnamen.")
+        return name, "", ""
+    if vorname is None and nachname is None:
+        vorname, nachname = teile_namen(name)
+    vorname, nachname = (vorname or "").strip(), (nachname or "").strip()
+    if not nachname:
+        raise BuchhaltungsFehler("Bitte einen Nachnamen angeben.")
+    return f"{vorname} {nachname}".strip(), vorname, nachname
+
+
 def _pruefe_status(typ: KontoTyp, status: MitgliedStatus | None) -> None:
     if typ == KontoTyp.PRIVAT and status is None:
         raise BuchhaltungsFehler("Für ein Privatkonto muss ein Status angegeben werden.")
@@ -106,16 +127,20 @@ def konto_anlegen(
     eintrittsdatum: date | None = None,
     bierspitz: str = "",
     email: str = "",
+    vorname: str | None = None,
+    nachname: str | None = None,
 ) -> Konto:
+    """Legt ein Konto an. Bei Privatkonten Vor- und Nachname angeben (sonst wird `name` aufgeteilt)."""
     if typ == KontoTyp.KW:
         raise BuchhaltungsFehler("Es gibt genau ein KW-Konto, es wird automatisch angelegt.")
+    name, vorname, nachname = _namensteile(typ, name, vorname, nachname)
     name = _pruefe_name(session, name, typ)
     _pruefe_status(typ, status)
     _pruefe_eintritt(typ, eintrittsdatum)
     bierspitz, email = _pruefe_kontakt(typ, bierspitz, email)
     konto = Konto(
-        name=name, typ=typ, status=status, bemerkung=bemerkung.strip(), eintrittsdatum=eintrittsdatum,
-        bierspitz=bierspitz, email=email,
+        name=name, vorname=vorname, nachname=nachname, typ=typ, status=status,
+        bemerkung=bemerkung.strip(), eintrittsdatum=eintrittsdatum, bierspitz=bierspitz, email=email,
     )
     if typ == KontoTyp.PRIVAT:
         konto.statusverlauf.append(Statuswechsel(status=status, gueltig_ab=eintrittsdatum or date.today()))
@@ -135,9 +160,13 @@ def konto_bearbeiten(
     statusverlauf: list[tuple[MitgliedStatus, date]] | None = None,
     bierspitz: str | None = None,
     email: str | None = None,
+    vorname: str | None = None,
+    nachname: str | None = None,
 ) -> Konto:
     """Ändert ein Konto. `None` bei Eintrittsdatum, Bierspitz oder E-Mail lässt den Wert unverändert.
 
+    Privatkonten: mit Vor-/Nachname wird der Name daraus gebildet; ohne bleibt die bisherige
+    Aufteilung, solange `name` gleich bleibt (sonst wird `name` neu aufgeteilt).
     Mit `statusverlauf` wird der komplette Verlauf ersetzt (und `status` ignoriert).
     Ohne Verlauf wird ein geänderter `status` als Statuswechsel ab heute eingetragen.
     """
@@ -146,6 +175,9 @@ def konto_bearbeiten(
         raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen.")
     if konto.typ == KontoTyp.KW and not aktiv:
         raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
+    if vorname is None and nachname is None and name.strip() == konto.name and konto.nachname:
+        vorname, nachname = konto.vorname, konto.nachname
+    name, konto.vorname, konto.nachname = _namensteile(konto.typ, name, vorname, nachname)
     konto.name = _pruefe_name(session, name, konto.typ, ausser_id=konto.id)
     _pruefe_eintritt(konto.typ, eintrittsdatum)
     neuer_bierspitz, neue_email = _pruefe_kontakt(

@@ -49,6 +49,8 @@ def erstelle_engine(pfad: Path | str | None = None) -> Engine:
 NACHTRAEGLICHE_SPALTEN = {
     "konten": {
         "eintrittsdatum": "DATE",
+        "vorname": "VARCHAR(100) NOT NULL DEFAULT ''",
+        "nachname": "VARCHAR(100) NOT NULL DEFAULT ''",
         "bierspitz": "VARCHAR(100) NOT NULL DEFAULT ''",
         "email": "VARCHAR(200) NOT NULL DEFAULT ''",
     },
@@ -65,6 +67,23 @@ def _ergaenze_spalten(engine: Engine) -> None:
                     conn.exec_driver_sql(f"ALTER TABLE {tabelle} ADD COLUMN {name} {typ}")
 
 
+def teile_namen(name: str) -> tuple[str, str]:
+    """'Max von Müller' -> ('Max von', 'Müller'): letztes Wort = Nachname, Rest = Vorname."""
+    teile = name.split()
+    if not teile:
+        return "", ""
+    return " ".join(teile[:-1]), teile[-1]
+
+
+def _namen_aufteilen(session: Session) -> None:
+    """Mitglieder aus der Zeit vor Vor-/Nachname: Namen einmalig aufteilen."""
+    alte = session.scalars(
+        select(Konto).where(Konto.typ == KontoTyp.PRIVAT, Konto.vorname == "", Konto.nachname == "")
+    )
+    for konto in alte:
+        konto.vorname, konto.nachname = teile_namen(konto.name)
+
+
 def init_db(engine: Engine) -> None:
     """Legt fehlende Tabellen/Spalten an und stellt sicher, dass es das KW-Konto gibt."""
     Base.metadata.create_all(engine)
@@ -73,3 +92,4 @@ def init_db(engine: Engine) -> None:
         kw = session.scalar(select(Konto).where(Konto.typ == KontoTyp.KW))
         if kw is None:
             session.add(Konto(name="KW", typ=KontoTyp.KW, bemerkung="Liquider Bestand"))
+        _namen_aufteilen(session)

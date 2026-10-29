@@ -5,7 +5,8 @@ Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
 
 ## Konzept
 
-- **Privatkonten**: eins pro Mitglied, mit Status **Fux**, **Aktiver** oder **Alumni**,
+- **Privatkonten**: eins pro Mitglied, mit **Vor- und Nachname** (Pflicht; angezeigt als
+  „Vorname Nachname“, sortiert nach Nachname), Status **Fux**, **Aktiver** oder **Alumni**,
   Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (optional, kann
   nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,
   Bierspitz und E-Mail.
@@ -97,7 +98,8 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
   (Google-Konto → Sicherheit → Bestätigung in zwei Schritten → App-Passwörter).
 - *Bankdaten*: Kontoinhaber, IBAN, BIC, Bank
 - *Texte*: Betreff, Verwendungszweck und die drei Mailtexte mit Platzhaltern wie
-  `{anrede}` (Bierspitz, sonst Name), `{saldo}`, `{betrag}`, `{stichtag}`, `{iban}` …
+  `{anrede}` (Bierspitz, sonst Vorname), `{vorname}`, `{nachname}`, `{saldo}`, `{betrag}`,
+  `{stichtag}`, `{iban}` …
 
 ### Regeln
 
@@ -159,6 +161,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
 | `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
 | `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
+| `test_namen.py` | Vor-/Nachname: Pflicht, Aufteilen alter Namen, Sortierung, Anrede, Dialog |
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
 | `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Fehlerfälle, Dialoge |
 | `test_sicherung.py` | Sicherung bei Start, nur bei Änderung, letzte 10, Wiederherstellen, Git-Ignorierung |

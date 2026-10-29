@@ -14,7 +14,7 @@ from dikas.ui.dialoge import KontoDialog
 from dikas.ui.hauptfenster import Hauptfenster
 
 
-def mitglied(session, name="Tom", **kwargs):
+def mitglied(session, name="Tom Becker", **kwargs):
     return bh.konto_anlegen(session, name, KontoTyp.PRIVAT, St.AKTIVER, **kwargs)
 
 
@@ -77,7 +77,7 @@ class TestLogik:
         engine = erstelle_engine(pfad)
         init_db(engine)
         with Session(engine) as s:
-            tom = next(k for k in bh.konten(s) if k.name == "Tom")
+            tom = next(k for k in bh.konten(s) if k.name == "Tom Becker")
             assert (tom.bierspitz, tom.email) == ("", "")
         engine.dispose()
         spalten = {z[1] for z in sqlite3.connect(pfad).execute("PRAGMA table_info(konten)")}
@@ -100,7 +100,8 @@ def meldungen(monkeypatch):
 
 class TestDialog:
     def _ausfuellen(self, d, email="tom@example.org"):
-        d.name.setText("Tom")
+        d.vorname.setText("Tom")
+        d.nachname.setText("Becker")
         d.email.setText(email)
 
     def test_felder_nur_bei_privatkonto(self, app):

@@ -40,8 +40,10 @@ class Kontoauszug:
 
 def platzhalter(konto: Konto, saldo: int, stichtag: date, e: Einstellungen) -> dict[str, str]:
     werte = {
-        "anrede": konto.bierspitz or konto.name,
+        "anrede": konto.bierspitz or konto.vorname or konto.name,
         "name": konto.name,
+        "vorname": konto.vorname,
+        "nachname": konto.nachname,
         "bierspitz": konto.bierspitz,
         "stichtag": stichtag.strftime("%d.%m.%Y"),
         "saldo": cent_zu_text(saldo),
@@ -70,10 +72,12 @@ def erstelle_auszug(konto: Konto, saldo: int, stichtag: date, e: Einstellungen) 
 
 
 def empfaenger_liste(session: Session, stichtag: date) -> list[tuple[Konto, int]]:
-    """Alle nicht gelöschten Privatkonten mit Saldo zum Stichtag, nach Name sortiert."""
+    """Alle nicht gelöschten Privatkonten mit Saldo zum Stichtag, nach Nach- und Vorname sortiert."""
     salden = buchhaltung.salden(session, bis=stichtag)
     konten = session.scalars(
-        select(Konto).where(Konto.typ == KontoTyp.PRIVAT, ~Konto.geloescht).order_by(Konto.name)
+        select(Konto)
+        .where(Konto.typ == KontoTyp.PRIVAT, ~Konto.geloescht)
+        .order_by(Konto.nachname, Konto.vorname)
     )
     return [(k, salden[k.id]) for k in konten]
 

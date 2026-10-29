@@ -87,7 +87,10 @@ class Konto(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Anzeigename; bei Privatkonten immer "Vorname Nachname" (wird aus beiden gebildet)
     name: Mapped[str] = mapped_column(String(100))
+    vorname: Mapped[str] = mapped_column(String(100), default="")
+    nachname: Mapped[str] = mapped_column(String(100), default="")
     typ: Mapped[KontoTyp] = mapped_column(Enum(KontoTyp, native_enum=False, length=10))
     # Nur bei Privatkonten gesetzt: aktueller Status (= neuester Eintrag im Statusverlauf)
     status: Mapped[Optional[MitgliedStatus]] = mapped_column(
