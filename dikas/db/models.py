@@ -31,6 +31,11 @@ class KontoTyp(enum.StrEnum):
         return {"PRIVAT": "Privatkonto", "KASSE": "Kasse", "KW": "KW-Konto"}[self.value]
 
     @property
+    def reihenfolge(self) -> int:
+        """Sortierung in Listen: KW oben, dann Kassen, dann Mitglieder."""
+        return {"KW": 0, "KASSE": 1, "PRIVAT": 2}[self.value]
+
+    @property
     def ist_aktivkonto(self) -> bool:
         """Aktivkonten steigen im Soll, alle anderen im Haben."""
         return self is KontoTyp.KW

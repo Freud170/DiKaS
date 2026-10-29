@@ -1,11 +1,10 @@
 """Hauptfenster: Kennzahlen oben, Kontenübersicht links, Buchungen des gewählten Kontos rechts."""
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -15,7 +14,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QTableWidget,
-    QTableWidgetItem,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -27,11 +25,13 @@ from dikas import __version__, buchhaltung
 from dikas.db.models import Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
+from dikas.ui.auswertung import AuswertungDialog
+from dikas.ui.bausteine import GRAU, Kennzahl, Panel
+from dikas.ui.bausteine import betrag_zelle as _betrag_zelle
+from dikas.ui.bausteine import zelle as _zelle
 from dikas.ui.dialoge import BeitragDialog, BuchungDialog, KontoDialog
 
 ALLE_BUCHUNGEN = None  # Auswahl "kein Konto" -> alle Buchungen anzeigen
-GRAU = QColor(stil.INAKTIV)
-ROT = QColor(stil.NEGATIV)
 
 # Filter für die Kontenliste: Beschriftung -> Prüffunktion.
 # Gelöschte Konten erscheinen nur unter "Gelöschte".
@@ -45,70 +45,6 @@ KONTEN_FILTER = {
     "Kassen": lambda k: not k.geloescht and k.typ == KontoTyp.KASSE,
     "Gelöschte": lambda k: k.geloescht,
 }
-# Reihenfolge in der Kontenliste: KW oben, dann Kassen, dann Mitglieder
-TYP_REIHENFOLGE = {KontoTyp.KW: 0, KontoTyp.KASSE: 1, KontoTyp.PRIVAT: 2}
-
-
-def _zelle(text: str, rechts: bool = False, daten=None) -> QTableWidgetItem:
-    item = QTableWidgetItem(text)
-    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-    if rechts:
-        item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    if daten is not None:
-        item.setData(Qt.UserRole, daten)
-    return item
-
-
-def _betrag_zelle(cent: int, fett: bool = False) -> QTableWidgetItem:
-    item = _zelle(cent_zu_text(cent), rechts=True)
-    if cent < 0:
-        item.setForeground(ROT)
-    if fett:
-        schrift = QFont(item.font())
-        schrift.setWeight(QFont.DemiBold)
-        item.setFont(schrift)
-    return item
-
-
-class Kennzahl(QFrame):
-    """Kleine Karte mit Überschrift und großem Wert."""
-
-    def __init__(self, titel: str):
-        super().__init__()
-        self.setObjectName("karte")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(2)
-        ueberschrift = QLabel(titel.upper())
-        ueberschrift.setObjectName("karteTitel")
-        self.wert = QLabel()
-        self.wert.setObjectName("karteWert")
-        layout.addWidget(ueberschrift)
-        layout.addWidget(self.wert)
-
-    def setze(self, cent: int, farbe: str | None = None):
-        self.wert.setText(cent_zu_text(cent))
-        self.wert.setStyleSheet(f"color: {farbe};" if farbe else "")
-
-
-class Panel(QFrame):
-    """Weiße Fläche mit Titelzeile für eine Tabelle."""
-
-    def __init__(self, titel: str):
-        super().__init__()
-        self.setObjectName("panel")
-        self.layout_ = QVBoxLayout(self)
-        self.layout_.setContentsMargins(14, 12, 14, 6)
-        self.layout_.setSpacing(8)
-        self.kopf = QHBoxLayout()
-        self.titel = QLabel(titel)
-        self.titel.setObjectName("panelTitel")
-        self.info = QLabel()
-        self.info.setObjectName("panelInfo")
-        self.kopf.addWidget(self.titel)
-        self.kopf.addStretch()
-        self.kopf.addWidget(self.info)
-        self.layout_.addLayout(self.kopf)
 
 
 class Hauptfenster(QMainWindow):
@@ -220,6 +156,7 @@ class Hauptfenster(QMainWindow):
         abstand = QWidget()
         abstand.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         leiste.addWidget(abstand)
+        self._aktion(leiste, "Auswertung", "DocumentPrintPreview", "Ctrl+P", self.auswertung, False)
         self._aktion(leiste, "Aktualisieren", "ViewRefresh", "F5", self.aktualisieren, False)
 
     def _aktion(self, leiste, text, icon, kuerzel, slot, primaer):
@@ -253,7 +190,7 @@ class Hauptfenster(QMainWindow):
             abstimmung = buchhaltung.abstimmung(session)
         konten = sorted(
             (k for k in alle if passt(k) and suchtext in k.name.lower()),
-            key=lambda k: (TYP_REIHENFOLGE[k.typ], k.name.lower()),
+            key=lambda k: (k.typ.reihenfolge, k.name.lower()),
         )
 
         self.konten_tabelle.setRowCount(len(konten))
@@ -343,6 +280,9 @@ class Hauptfenster(QMainWindow):
 
     def zeige_alle_buchungen(self):
         self.konten_tabelle.clearSelection()
+
+    def auswertung(self):
+        AuswertungDialog(self.Session, self).exec()
 
     def neues_konto(self):
         dialog = KontoDialog(self)

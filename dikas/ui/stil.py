@@ -1,5 +1,7 @@
 """Farben, Schrift und Stylesheet der Oberfläche."""
 
+from pathlib import Path
+
 from PySide6.QtCore import QLibraryInfo, QLocale, Qt, QTranslator
 from PySide6.QtGui import QColor, QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
@@ -22,6 +24,8 @@ AKZENT_HELL = "#e7effa"
 POSITIV = "#1e7b45"
 NEGATIV = "#c0392b"
 INAKTIV = "#9aa3ae"
+
+HAKEN = (Path(__file__).parent / "haken.svg").as_posix()
 
 STYLESHEET = f"""
 QWidget {{
@@ -159,6 +163,50 @@ QPushButton:default {{
 }}
 QPushButton:default:hover {{
     background: {AKZENT_HOVER};
+}}
+
+/* Reiter */
+QTabWidget::pane {{
+    background: {FLAECHE};
+    border: 1px solid {RAND};
+    border-radius: 8px;
+    top: -1px;
+}}
+QTabBar::tab {{
+    background: transparent;
+    color: {TEXT_LEISE};
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 16px;
+    margin-right: 4px;
+    font-weight: 600;
+}}
+QTabBar::tab:hover {{
+    color: {TEXT};
+}}
+QTabBar::tab:selected {{
+    color: {AKZENT};
+    border-bottom: 2px solid {AKZENT};
+}}
+
+/* Kontrollkästchen */
+QCheckBox {{
+    spacing: 8px;
+}}
+QCheckBox::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid #b7c0cb;
+    border-radius: 4px;
+    background: {FLAECHE};
+}}
+QCheckBox::indicator:hover {{
+    border-color: {AKZENT};
+}}
+QCheckBox::indicator:checked {{
+    background: {AKZENT};
+    border-color: {AKZENT};
+    image: url({HAKEN});
 }}
 
 /* Sonstiges */

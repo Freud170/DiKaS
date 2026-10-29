@@ -21,5 +21,8 @@ dikas = "dikas.app:main"
 [tool.setuptools.packages.find]
 include = ["dikas*"]
 
+[tool.setuptools.package-data]
+"dikas.ui" = ["*.svg"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

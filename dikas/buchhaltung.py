@@ -262,8 +262,13 @@ def stornieren(session: Session, buchung_id: int, datum: date | None = None) -> 
     return storno
 
 
-def buchungen(session: Session, konto_id: int | None = None) -> list[Buchung]:
-    """Alle Buchungen (neueste zuerst), optional nur die eines Kontos."""
+def buchungen(
+    session: Session,
+    konto_id: int | None = None,
+    von: date | None = None,
+    bis: date | None = None,
+) -> list[Buchung]:
+    """Alle Buchungen (neueste zuerst), optional nur die eines Kontos und/oder eines Zeitraums."""
     abfrage = (
         select(Buchung)
         .options(
@@ -277,6 +282,10 @@ def buchungen(session: Session, konto_id: int | None = None) -> list[Buchung]:
         abfrage = abfrage.where(
             or_(Buchung.soll_konto_id == konto_id, Buchung.haben_konto_id == konto_id)
         )
+    if von is not None:
+        abfrage = abfrage.where(Buchung.datum >= von)
+    if bis is not None:
+        abfrage = abfrage.where(Buchung.datum <= bis)
     return list(session.scalars(abfrage).unique())
 
 
@@ -340,6 +349,89 @@ def salden(session: Session) -> dict[int, int]:
 
 def saldo(session: Session, konto_id: int) -> int:
     return salden(session)[konto_id]
+
+
+# --- Auswertung -----------------------------------------------------------
+
+@dataclass(frozen=True)
+class KontoBewegung:
+    """Entwicklung eines Kontos im Zeitraum (alle Werte in Cent)."""
+
+    konto: Konto
+    anfang: int  # Saldo vor dem Startdatum
+    zugang: int  # Summe aller Buchungen, die den Saldo erhöhen
+    abgang: int  # Summe aller Buchungen, die den Saldo senken (positiv)
+
+    @property
+    def veraenderung(self) -> int:
+        return self.zugang - self.abgang
+
+    @property
+    def ende(self) -> int:
+        return self.anfang + self.veraenderung
+
+    @property
+    def hat_werte(self) -> bool:
+        return bool(self.anfang or self.zugang or self.abgang)
+
+
+def _pruefe_zeitraum(von: date, bis: date) -> None:
+    if von > bis:
+        raise BuchhaltungsFehler("Das Startdatum liegt nach dem Enddatum.")
+
+
+def kontobewegungen(session: Session, von: date, bis: date) -> list[KontoBewegung]:
+    """Anfangsbestand, Zu- und Abgänge sowie Endbestand jedes Kontos im Zeitraum (inkl. Enddatum)."""
+    _pruefe_zeitraum(von, bis)
+
+    def summen(spalte, bedingung) -> dict[int, int]:
+        return dict(
+            session.execute(
+                select(spalte, func.sum(Buchung.betrag_cent)).where(bedingung).group_by(spalte)
+            ).all()
+        )
+
+    vorher = Buchung.datum < von
+    im_zeitraum = Buchung.datum.between(von, bis)
+    soll_vor, haben_vor = summen(Buchung.soll_konto_id, vorher), summen(Buchung.haben_konto_id, vorher)
+    soll_im, haben_im = summen(Buchung.soll_konto_id, im_zeitraum), summen(Buchung.haben_konto_id, im_zeitraum)
+
+    ergebnis = []
+    for konto in konten(session):
+        # Aktivkonto (KW) steigt im Soll, alle anderen im Haben
+        if konto.typ.ist_aktivkonto:
+            plus_vor, minus_vor, plus_im, minus_im = soll_vor, haben_vor, soll_im, haben_im
+        else:
+            plus_vor, minus_vor, plus_im, minus_im = haben_vor, soll_vor, haben_im, soll_im
+        ergebnis.append(KontoBewegung(
+            konto=konto,
+            anfang=plus_vor.get(konto.id, 0) - minus_vor.get(konto.id, 0),
+            zugang=plus_im.get(konto.id, 0),
+            abgang=minus_im.get(konto.id, 0),
+        ))
+    return ergebnis
+
+
+@dataclass(frozen=True)
+class ArtSumme:
+    art: Buchungsart
+    anzahl: int
+    summe: int
+
+
+def summen_nach_art(session: Session, von: date, bis: date) -> list[ArtSumme]:
+    """Anzahl und Gesamtbetrag der Buchungen je Buchungsart im Zeitraum."""
+    _pruefe_zeitraum(von, bis)
+    zeilen = session.execute(
+        select(Buchung.art, func.count(), func.sum(Buchung.betrag_cent))
+        .where(Buchung.datum.between(von, bis))
+        .group_by(Buchung.art)
+    ).all()
+    reihenfolge = list(Buchungsart)
+    return sorted(
+        (ArtSumme(art, anzahl, summe) for art, anzahl, summe in zeilen),
+        key=lambda a: reihenfolge.index(a.art),
+    )
 
 
 @dataclass(frozen=True)

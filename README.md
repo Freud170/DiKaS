@@ -35,6 +35,20 @@ Ein Privatkonto im Minus heißt: Das Mitglied schuldet dem Verein noch etwas.
 Zielkasse wählen. Nach Vorschau und Bestätigung wird für jedes aktive Mitglied eine
 Beitragsbuchung angelegt. Bei einem Fehler wird gar nichts gebucht.
 
+### Auswertung
+
+Button „Auswertung“ (Strg+P): Zeitraum wählen (Schnellauswahl Dieses/Letztes Jahr,
+Dieser/Letzter Monat oder frei), Start- und Enddatum zählen mit.
+
+- **Kontobewegungen**: je Konto Anfangsbestand, Zugänge, Abgänge, Veränderung und
+  Endbestand, mit Summen für Kassen und Privatkonten; filterbar nach Kontoart/Status
+- **Nach Buchungsart**: Anzahl und Summe je Buchungsart
+- **Buchungen**: alle Buchungen im Zeitraum, filterbar nach Konto
+- **Als PDF speichern**: Bericht mit allen drei Teilen (A4)
+
+Stornierte Buchungen und ihre Stornos zählen jeweils als Zu- und Abgang, heben sich
+in der Veränderung aber auf.
+
 ### Regeln
 
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
@@ -84,6 +98,7 @@ Zum Sichern oder Weitergeben einfach diese Datei kopieren.
 | `test_szenarien.py` | Vereinsalltag: Beiträge, Raten, Überzahlung, Strichliste, Auslagen, Feste, Spenden, Korrekturen, Austritt, ein komplettes Vereinsjahr |
 | `test_robustheit.py` | Transaktionen (alles oder nichts), Speichern/Neustart, DB-Regeln, Zufallsabläufe, große Mengen, Rundung |
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
+| `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geld.py` | Betragseingabe und -anzeige |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
 
@@ -102,7 +117,9 @@ dikas/
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung
   ui/
     stil.py         Farben, Stylesheet, Symbole, deutsche Qt-Texte
+    bausteine.py    Gemeinsame Bausteine (Tabellenzellen, Kennzahl-Karten, Panels)
     hauptfenster.py Kennzahlen, Kontenübersicht (Suche/Filter) + Buchungsliste
+    auswertung.py   Auswertung über einen Zeitraum + PDF-Export
     dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests
 ```
