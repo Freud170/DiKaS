@@ -1,12 +1,14 @@
 """Hauptfenster: Kennzahlen oben, Kontenübersicht links, Buchungen des gewählten Kontos rechts."""
 
 import sqlite3
+import sys
 from pathlib import Path
 
-from PySide6.QtCore import QSize, QStandardPaths, Qt, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtCore import QProcess, QSize, QStandardPaths, Qt, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -26,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy.orm import sessionmaker
 
-from dikas import __version__, buchhaltung, datenaustausch
+from dikas import __version__, buchhaltung, datenaustausch, sicherung
 from dikas.db import init_db
 from dikas.db.models import Buchung, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
@@ -116,6 +118,7 @@ class Hauptfenster(QMainWindow):
             ("Korrigieren", "MailMessageNew", "Ausgewählte Buchung korrigieren (Doppelklick)",
              self.korrigiere_auswahl),
             ("Stornieren", "EditUndo", "Ausgewählte Buchung stornieren (Gegenbuchung)", self.storniere_auswahl),
+            ("Löschen", "EditDelete", "Ausgewählte Buchungen endgültig löschen (Entf)", self.loesche_auswahl),
             ("Alle anzeigen", None, "Auswahl aufheben und alle Buchungen anzeigen", self.zeige_alle_buchungen),
         ):
             knopf = QToolButton()
@@ -130,6 +133,10 @@ class Hauptfenster(QMainWindow):
             aktionen.addWidget(knopf)
         rechts.layout_.addLayout(aktionen)
         self.buchungen_tabelle.itemDoubleClicked.connect(self.korrigiere_auswahl)
+        # Mehrere Buchungen markierbar (Strg/Umschalt) – zum gemeinsamen Löschen
+        self.buchungen_tabelle.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        entf = QShortcut(QKeySequence.Delete, self.buchungen_tabelle, self.loesche_auswahl)
+        entf.setContext(Qt.WidgetShortcut)
         self.buchungen_tabelle.setContextMenuPolicy(Qt.CustomContextMenu)
         self.buchungen_tabelle.customContextMenuRequested.connect(self._buchungs_menue)
         rechts.layout_.addWidget(self.buchungen_tabelle)
@@ -198,6 +205,7 @@ class Hauptfenster(QMainWindow):
         menue.addAction(stil.symbol("FolderOpen"), "Datenordner öffnen", self.datenordner_oeffnen)
         menue.addSeparator()
         menue.addAction(stil.symbol("DocumentProperties"), "Einstellungen …", self.einstellungen)
+        menue.addAction(stil.symbol("SyncSynchronizing"), "Update installieren …", self.update_installieren)
         self.extras_knopf = QToolButton()
         self.extras_knopf.setIcon(stil.symbol("DocumentProperties"))
         self.extras_knopf.setToolTip("Daten, Sicherungen und Einstellungen")
@@ -352,6 +360,37 @@ class Hauptfenster(QMainWindow):
         dialog.exec()
         if dialog.wiederhergestellt:
             self.aktualisieren()
+
+    # --- Update ---------------------------------------------------------------
+
+    # Stiller Installer-Aufruf: ersetzt die alte Version und startet DiKaS danach neu
+    UPDATE_PARAMETER = ["/SILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/NORESTART", "/SP-"]
+
+    def update_installieren(self):
+        if not getattr(sys, "frozen", False):
+            QMessageBox.information(
+                self, "Update",
+                "Updates lassen sich nur in der installierten Version einspielen.\n"
+                "In der Entwicklungsumgebung einfach den Code aktualisieren.",
+            )
+            return
+        start = Path(QStandardPaths.writableLocation(QStandardPaths.DownloadLocation))
+        setup, _ = QFileDialog.getOpenFileName(
+            self, "Update installieren", str(start), "DiKaS-Installer (DiKaS-Setup*.exe)"
+        )
+        if not setup:
+            return
+        antwort = QMessageBox.question(
+            self, "Update installieren",
+            f"DiKaS wird jetzt geschlossen und mit\n{Path(setup).name}\naktualisiert.\n\n"
+            "Deine Daten bleiben erhalten. DiKaS startet danach automatisch neu.",
+        )
+        if antwort != QMessageBox.Yes:
+            return
+        if not QProcess.startDetached(setup, self.UPDATE_PARAMETER):
+            QMessageBox.warning(self, "Update", "Der Installer konnte nicht gestartet werden.")
+            return
+        QApplication.quit()
 
     # --- Datenaustausch zwischen PCs ----------------------------------------
 
@@ -513,7 +552,44 @@ class Hauptfenster(QMainWindow):
         menue = QMenu(self)
         menue.addAction(stil.symbol("MailMessageNew"), "Korrigieren …", self.korrigiere_auswahl)
         menue.addAction(stil.symbol("EditUndo"), "Stornieren", self.storniere_auswahl)
+        menue.addSeparator()
+        menue.addAction(stil.symbol("EditDelete"), "Löschen …", self.loesche_auswahl)
         menue.exec(self.buchungen_tabelle.viewport().mapToGlobal(position))
+
+    def loesche_auswahl(self):
+        zeilen = self.buchungen_tabelle.selectionModel().selectedRows()
+        if not zeilen:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine oder mehrere Buchungen auswählen.")
+            return
+        ids = [self.buchungen_tabelle.item(z.row(), 0).data(Qt.UserRole) for z in zeilen]
+        with self.Session() as session:
+            loeschen = buchhaltung.zu_loeschende_buchungen(session, ids)
+            liste = "\n".join(
+                f"• {b.datum:%d.%m.%Y}  {b.art.anzeige}  {cent_zu_text(b.betrag_cent)}  {b.text}"
+                for b in loeschen[:12]
+            )
+        if len(loeschen) > 12:
+            liste += f"\n… und {len(loeschen) - 12} weitere"
+        mitgenommen = len(loeschen) - len(set(ids))
+        zusatz = (f"\n\nDazu gehören {mitgenommen} Storno-Buchung(en), die mitgelöscht werden, "
+                  "damit die falsche Buchung nicht wieder gilt.") if mitgenommen else ""
+        antwort = QMessageBox.question(
+            self,
+            "Buchungen löschen",
+            f"{len(loeschen)} Buchung(en) endgültig löschen?\n\n{liste}{zusatz}\n\n"
+            "Die Kontostände ändern sich entsprechend. Vorher wird automatisch gesichert "
+            "(zurückholen über Schraubenschlüssel → Sicherungen).",
+        )
+        if antwort != QMessageBox.Yes:
+            return
+        try:
+            if Path(self.db_pfad).exists():
+                sicherung.sichern(Path(self.db_pfad))
+        except (OSError, sqlite3.Error) as fehler:
+            QMessageBox.warning(self, "Fehler", f"Sicherung vor dem Löschen fehlgeschlagen – nichts gelöscht.\n{fehler}")
+            return
+        if self._ausfuehren(lambda s: buchhaltung.buchungen_loeschen(s, ids)):
+            self.statusBar().showMessage(f"{len(loeschen)} Buchung(en) gelöscht.", 5000)
 
     def _gewaehlte_buchung_id(self) -> int | None:
         zeilen = self.buchungen_tabelle.selectionModel().selectedRows()

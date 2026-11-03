@@ -30,6 +30,12 @@ if (-not $OhneTests) {
 }
 
 Schritt "DiKaS.exe bauen (PyInstaller)"
+# Nur Windows und Python im PATH: sonst sammelt PyInstaller fremde DLLs ein, die zufällig im
+# PATH liegen (z. B. aus einem Java-JDK). Der eigene PATH wird danach wiederhergestellt.
+$alterPath = $env:Path
+$pythonBasis = & $python -c "import sys; print(sys.base_prefix)"
+$env:Path = "$env:SystemRoot\System32;$env:SystemRoot;$pythonBasis;$(Split-Path $python)"
+try {
 & $python -m PyInstaller `
     --noconfirm --clean --windowed `
     --name DiKaS `
@@ -40,7 +46,11 @@ Schritt "DiKaS.exe bauen (PyInstaller)"
     --workpath (Join-Path $build "work") `
     --specpath $build `
     (Join-Path $PSScriptRoot "start_dikas.py")
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller fehlgeschlagen." }
+$pyinstallerErgebnis = $LASTEXITCODE
+} finally {
+    $env:Path = $alterPath
+}
+if ($pyinstallerErgebnis -ne 0) { throw "PyInstaller fehlgeschlagen." }
 
 Schritt "Installer bauen (Inno Setup)"
 $iscc = @(

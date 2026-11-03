@@ -431,6 +431,49 @@ def stornieren(session: Session, buchung_id: int, datum: date | None = None) -> 
     return storno
 
 
+def zu_loeschende_buchungen(session: Session, buchung_ids: Collection[int]) -> list[Buchung]:
+    """Die Buchungen, die beim Löschen tatsächlich entfernt werden.
+
+    Storno-Paare gehören zusammen: Wird eine stornierte Buchung oder ihr Storno gewählt,
+    wird immer beides gelöscht – sonst würde die falsche Buchung wieder wirksam.
+    """
+    ergebnis: dict[int, Buchung] = {}
+    for buchung_id in buchung_ids:
+        b = session.get(Buchung, buchung_id)
+        if b is None:
+            raise BuchhaltungsFehler(f"Buchung {buchung_id} existiert nicht.")
+        for teil in (b, b.storno_von, b.storniert_durch):
+            if teil is not None:
+                ergebnis[teil.id] = teil
+    return sorted(ergebnis.values(), key=lambda b: b.id)
+
+
+def buchungen_loeschen(session: Session, buchung_ids: Collection[int]) -> int:
+    """Löscht Buchungen endgültig (inkl. zugehöriger Storno-Paare). Rückgabe: Anzahl gelöschter.
+
+    Buchhalterisch sauberer ist Stornieren – Löschen ist für eine aufgeräumte Liste gedacht.
+    Gesperrt, wenn dadurch ein gelöschtes (ausgeblendetes) Konto nicht mehr auf 0 stünde.
+    """
+    loeschen = zu_loeschende_buchungen(session, buchung_ids)
+    if not loeschen:
+        raise BuchhaltungsFehler("Keine Buchung ausgewählt.")
+    weg = {b.id for b in loeschen}
+    for b in loeschen:
+        for konto in (b.soll_konto, b.haben_konto):
+            if not konto.geloescht:
+                continue
+            # Nur erlaubt, wenn sich die Wirkung auf das gelöschte Konto insgesamt aufhebt
+            if sum(x.wirkung_auf(konto) for x in loeschen) != 0:
+                raise BuchhaltungsFehler(
+                    f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen."
+                )
+    # Stornos zuerst, weil sie auf ihre Originalbuchung verweisen
+    for b in sorted(loeschen, key=lambda b: not b.ist_storno):
+        session.delete(b)
+        session.flush()
+    return len(weg)
+
+
 def eingabe_aus_buchung(buchung: Buchung) -> dict:
     """Die Werte einer Buchung so, wie sie in `buchen` eingegeben wurden (für Korrekturen)."""
     regel = REGELN.get(buchung.art)

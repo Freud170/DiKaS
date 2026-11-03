@@ -10,7 +10,12 @@ Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
    geschützt“: **Weitere Informationen → Trotzdem ausführen** (das Programm ist nicht
    kostenpflichtig signiert).
 2. DiKaS über Startmenü oder Desktop-Verknüpfung starten.
-3. **Updates:** neuen Installer einfach drüber installieren – die Daten bleiben erhalten.
+3. **Updates** – zwei Wege, die Daten bleiben jeweils erhalten:
+   - In DiKaS: Schraubenschlüssel → **„Update installieren …“** → neue
+     `DiKaS-Setup-<Version>.exe` wählen. DiKaS schließt sich, aktualisiert sich ohne
+     weitere Fragen und startet neu.
+   - Oder die neue Setup-Datei per Doppelklick starten: Sie erkennt die installierte
+     Version, fragt einmal nach, deinstalliert die alte und installiert die neue.
 
 Die Daten liegen bei der installierten Version unter `%LOCALAPPDATA%\DiKaS\daten\`
 (Schraubenschlüssel → „Datenordner öffnen“) – getrennt vom Programm, nicht in OneDrive,
@@ -153,7 +158,10 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
 
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
 - Beträge werden in Cent (Ganzzahl) gespeichert.
-- Buchungen werden nie gelöscht, sondern **storniert** (automatische Gegenbuchung).
+- Buchhalterisch sauber ist **Stornieren** (automatische Gegenbuchung).
+- **Löschen** (Knopf an der Buchungsliste, Entf-Taste oder Rechtsklick; mehrere per
+  Strg/Umschalt markierbar) entfernt Buchungen endgültig – für eine übersichtliche Liste.
+  Storno-Paare werden immer gemeinsam gelöscht. Vorher wird automatisch gesichert.
 - **Korrigieren** (Doppelklick auf eine Buchung, Knopf über der Buchungsliste oder
   Rechtsklick): Dialog mit allen Werten vorbefüllt. Reine Text-/Beleg-Änderungen werden direkt
   übernommen; ändern sich Betrag, Konten, Art oder Datum, wird die alte Buchung (mit ihrem
@@ -214,6 +222,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
 | `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
 | `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
+| `test_buchungen_loeschen.py` | Buchungen löschen (Storno-Paare, Mehrfachauswahl, Schutz), Update-Menüpunkt |
 | `test_korrektur.py` | Buchungen korrigieren, Beitragsstatus bei Eintritt im Laufe des Jahres |
 | `test_beitrag_auswahl.py` | Status FM/EM, manuelle Auswahl im Beitragslauf, Doppelschutz |
 | `test_namen.py` | Vor-/Nachname: Pflicht, Aufteilen alter Namen, Sortierung, Anrede, Dialog |
