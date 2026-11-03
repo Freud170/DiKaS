@@ -185,6 +185,45 @@ class TestDialog:
         assert (d.vorname.text(), d.nachname.text()) == ("Karl Heinz", "von der Heide")
 
 
+class TestSortierungMitNamenszusatz:
+    """„von Hahn“ steht unter H, Umlaute wie im Telefonbuch."""
+
+    NAMEN = [("Gerda", "von Hahn"), ("Ida", "Imhof"), ("Hans", "Haas"), ("Karl Heinz", "von der Heide"),
+             ("Jan", "de Vries"), ("Ute", "Ärmel"), ("Otto", "Abel"), ("Max", "Zu"), ("Eva", "van Dyk")]
+
+    @pytest.fixture
+    def namen_session(self, session):
+        for vorname, nachname in self.NAMEN:
+            mitglied(session, vorname, nachname)
+        return session
+
+    def test_konten(self, namen_session):
+        namen = [k.name for k in bh.konten(namen_session) if k.typ == KontoTyp.PRIVAT]
+        assert namen == ["Otto Abel", "Ute Ärmel", "Eva van Dyk", "Hans Haas", "Gerda von Hahn",
+                         "Karl Heinz von der Heide", "Ida Imhof", "Jan de Vries", "Max Zu"]
+
+    def test_nachname_nur_aus_zusatz_bleibt(self, namen_session):
+        """Ein Nachname, der selbst wie ein Zusatz aussieht („Zu“), wird nicht weggekürzt."""
+        zu = next(k for k in bh.konten(namen_session) if k.nachname == "Zu")
+        assert bh.sortierschluessel(zu)[0] == "zu"
+
+    def test_beitragsvorschau(self, namen_session):
+        v = bh.beitrag_vorschau(namen_session, {St.AKTIVER: 100}, 2026)
+        alle = [m.name for m, _ in v.faellig] + [m.name for m in v.zusaetzlich_waehlbar]
+        assert alle.index("Gerda von Hahn") < alle.index("Ida Imhof")
+        assert alle.index("Hans Haas") < alle.index("Gerda von Hahn")
+
+    def test_kontoauszug(self, namen_session):
+        namen = [k.name for k, _ in ka.empfaenger_liste(namen_session, date(2026, 12, 31))]
+        assert namen.index("Hans Haas") < namen.index("Gerda von Hahn") < namen.index("Ida Imhof")
+
+    def test_kassen_nach_namen(self, session):
+        for name in ("Zeltkasse", "Ärger-Kasse", "Beitragskasse"):
+            bh.konto_anlegen(session, name, KontoTyp.KASSE)
+        assert [k.name for k in bh.konten(session) if k.typ == KontoTyp.KASSE] == [
+            "Ärger-Kasse", "Beitragskasse", "Zeltkasse"]
+
+
 def test_kontenliste_nach_nachname_sortiert(app, engine):
     with Session(engine) as s, s.begin():
         for vorname, nachname in (("Zoe", "Adler"), ("Anna", "Zimmer"), ("Ben", "Adler")):

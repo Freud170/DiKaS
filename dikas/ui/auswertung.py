@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy.orm import sessionmaker
 
 from dikas import buchhaltung
-from dikas.buchhaltung import ArtSumme, KontoBewegung
+from dikas.buchhaltung import ArtSumme, KontoBewegung, sortierschluessel
 from dikas.db.models import Buchung, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
@@ -77,7 +77,7 @@ def gruppiere(bewegungen: list[KontoBewegung]) -> list[tuple[str, list[KontoBewe
     ergebnis = []
     for typ, titel in GRUPPEN:
         zeilen = sorted(
-            (b for b in bewegungen if b.konto.typ == typ), key=lambda b: b.konto.name.lower()
+            (b for b in bewegungen if b.konto.typ == typ), key=lambda b: sortierschluessel(b.konto)
         )
         if zeilen:
             ergebnis.append((titel, zeilen, typ != KontoTyp.KW))

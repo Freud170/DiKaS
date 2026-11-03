@@ -74,10 +74,9 @@ def erstelle_auszug(konto: Konto, saldo: int, stichtag: date, e: Einstellungen) 
 def empfaenger_liste(session: Session, stichtag: date) -> list[tuple[Konto, int]]:
     """Alle nicht gelöschten Privatkonten mit Saldo zum Stichtag, nach Nach- und Vorname sortiert."""
     salden = buchhaltung.salden(session, bis=stichtag)
-    konten = session.scalars(
-        select(Konto)
-        .where(Konto.typ == KontoTyp.PRIVAT, ~Konto.geloescht)
-        .order_by(Konto.nachname, Konto.vorname)
+    konten = sorted(
+        session.scalars(select(Konto).where(Konto.typ == KontoTyp.PRIVAT, ~Konto.geloescht)),
+        key=buchhaltung.sortierschluessel,
     )
     return [(k, salden[k.id]) for k in konten]
 

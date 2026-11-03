@@ -244,7 +244,7 @@ class Hauptfenster(QMainWindow):
             abstimmung = buchhaltung.abstimmung(session)
         konten = sorted(
             (k for k in alle if passt(k) and suchtext in f"{k.name} {k.bierspitz} {k.email}".lower()),
-            key=lambda k: (k.typ.reihenfolge, (k.nachname or k.name).lower(), k.vorname.lower()),
+            key=lambda k: (k.typ.reihenfolge, buchhaltung.sortierschluessel(k)),
         )
 
         self.konten_tabelle.setRowCount(len(konten))

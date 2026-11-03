@@ -47,7 +47,8 @@ Ergebnis: `build\installer\DiKaS-Setup-<Version>.exe` (ca. 40 MB). Die Version s
 ## Konzept
 
 - **Privatkonten**: eins pro Mitglied, mit **Vor- und Nachname** (Pflicht; angezeigt als
-  „Vorname Nachname“, sortiert nach Nachname), Status **Fux**, **Aktiver**, **Alumni**,
+  „Vorname Nachname“, sortiert nach Nachname – Namenszusätze wie „von“, „van“, „de“, „zu“
+  werden dabei übersprungen, „von Hahn“ steht also unter H; Umlaute wie im Telefonbuch), Status **Fux**, **Aktiver**, **Alumni**,
   **Fördermitglied (FM)** oder **Ehrenmitglied (EM)**,
   Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (optional, kann
   nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,

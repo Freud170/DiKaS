@@ -51,10 +51,10 @@ def kw_konto(session: Session) -> Konto:
 
 
 def konten(session: Session, nur_aktive: bool = False) -> list[Konto]:
-    abfrage = select(Konto).order_by(Konto.typ, Konto.name)
+    abfrage = select(Konto)
     if nur_aktive:
         abfrage = abfrage.where(Konto.aktiv)
-    return list(session.scalars(abfrage))
+    return sorted(session.scalars(abfrage), key=lambda k: (k.typ.value, sortierschluessel(k)))
 
 
 def _pruefe_name(session: Session, name: str, typ: KontoTyp, ausser_id: int | None = None) -> str:
@@ -91,6 +91,32 @@ def _namensteile(
     if not nachname:
         raise BuchhaltungsFehler("Bitte einen Nachnamen angeben.")
     return f"{vorname} {nachname}".strip(), vorname, nachname
+
+
+# Namenszusätze, die beim Sortieren übersprungen werden ("von Hahn" steht unter H)
+NAMENSZUSAETZE = {
+    "von", "vom", "van", "de", "der", "den", "des", "du", "da", "di", "del", "della",
+    "la", "le", "zu", "zum", "zur", "ten", "ter", "op",
+}
+_UMLAUTE = str.maketrans({"ä": "a", "ö": "o", "ü": "u", "ß": "ss"})
+
+
+def _sortierform(text: str) -> str:
+    """Kleinschreibung, Umlaute wie Grundbuchstaben (DIN 5007): 'Ärger' → 'arger'."""
+    return text.casefold().translate(_UMLAUTE)
+
+
+def sortierschluessel(konto: Konto) -> tuple[str, str, str]:
+    """Sortierung von Mitgliedern nach Nachname ohne Zusätze, dann Vorname.
+
+    'Gerda von Hahn' → ('hahn', 'gerda', …). Kassen/KW nach ihrem Namen.
+    """
+    if konto.typ != KontoTyp.PRIVAT or not konto.nachname:
+        return (_sortierform(konto.name), "", "")
+    woerter = konto.nachname.split()
+    while len(woerter) > 1 and woerter[0].casefold() in NAMENSZUSAETZE:
+        woerter.pop(0)
+    return (_sortierform(" ".join(woerter)), _sortierform(konto.vorname), _sortierform(konto.nachname))
 
 
 def _pruefe_status(typ: KontoTyp, status: MitgliedStatus | None) -> None:
@@ -551,10 +577,9 @@ def beitrag_vorschau(
     `beitragsstatus`. Alle anderen aktiven Mitglieder werden mit Grund aufgelistet."""
     stichtag = date(jahr, 1, 1)
     schon = _schon_abgebucht(session, jahr)
-    mitglieder = session.scalars(
-        select(Konto)
-        .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv, ~Konto.geloescht)
-        .order_by(Konto.nachname, Konto.vorname)
+    mitglieder = sorted(
+        session.scalars(select(Konto).where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv, ~Konto.geloescht)),
+        key=sortierschluessel,
     )
     faellig, bereits, spaeter, ohne_datum, ohne_beitrag = [], [], [], [], []
     betrag_je_konto, status_je_konto = {}, {}
