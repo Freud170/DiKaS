@@ -209,6 +209,29 @@ QCheckBox::indicator:checked {{
     image: url({HAKEN});
 }}
 
+/* Jahresumschalter ‹ 2026 › */
+#jahrAuswahl QToolButton {{
+    background: {FLAECHE};
+    border: 1px solid #cfd5dd;
+    border-radius: 6px;
+    min-width: 30px;
+    min-height: 30px;
+    font-size: 14pt;
+    padding: 0;
+}}
+#jahrAuswahl QToolButton:hover {{
+    background: {AKZENT_HELL};
+    border-color: {AKZENT};
+}}
+#jahrAuswahl QToolButton:disabled {{
+    color: #c4cad2;
+}}
+#jahrWert {{
+    font-size: 12pt;
+    font-weight: 600;
+    min-width: 56px;
+}}
+
 /* Kontrollkästchen in Tabellen (Auswahl im Beitragslauf und beim Mailversand) */
 QTableWidget::indicator {{
     width: 16px;

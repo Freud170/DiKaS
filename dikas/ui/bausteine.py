@@ -3,12 +3,12 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIntValidator
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
 )
 
@@ -61,23 +61,60 @@ class ZahlFeld(QLineEdit):
         self.setText(str(wert))
 
 
-class JahrAuswahl(QComboBox):
-    """Auswahlliste von Jahren (neuestes oben), mit value()/setValue()/valueChanged."""
+class JahrAuswahl(QFrame):
+    """Kompakter Jahresumschalter ‹ 2026 › (auch per Mausrad und Pfeiltasten),
+    mit value()/setValue()/valueChanged wie eine QSpinBox."""
 
     valueChanged = Signal(int)
 
     def __init__(self, von: int, bis: int, wert: int):
         super().__init__()
-        for jahr in range(bis, von - 1, -1):
-            self.addItem(str(jahr), jahr)
+        self.setObjectName("jahrAuswahl")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self._von, self._bis = von, bis
+        self.zurueck = QToolButton()
+        self.zurueck.setText("‹")
+        self.zurueck.setToolTip("Vorheriges Jahr")
+        self.zurueck.clicked.connect(lambda: self.setValue(self._wert - 1))
+        self.weiter = QToolButton()
+        self.weiter.setText("›")
+        self.weiter.setToolTip("Nächstes Jahr")
+        self.weiter.clicked.connect(lambda: self.setValue(self._wert + 1))
+        self.anzeige = QLabel()
+        self.anzeige.setObjectName("jahrWert")
+        self.anzeige.setAlignment(Qt.AlignCenter)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.zurueck)
+        layout.addWidget(self.anzeige)
+        layout.addWidget(self.weiter)
+        layout.addStretch()
+        self._wert = None
         self.setValue(wert)
-        self.currentIndexChanged.connect(lambda _: self.valueChanged.emit(self.value()))
 
     def value(self) -> int:
-        return self.currentData()
+        return self._wert
 
     def setValue(self, jahr: int):
-        self.setCurrentIndex(self.findData(jahr))
+        jahr = max(self._von, min(self._bis, jahr))
+        geaendert = jahr != self._wert
+        self._wert = jahr
+        self.anzeige.setText(str(jahr))
+        self.zurueck.setEnabled(jahr > self._von)
+        self.weiter.setEnabled(jahr < self._bis)
+        if geaendert:
+            self.valueChanged.emit(jahr)
+
+    def wheelEvent(self, event):
+        self.setValue(self._wert + (1 if event.angleDelta().y() > 0 else -1))
+
+    def keyPressEvent(self, event):
+        schritte = {Qt.Key_Up: 1, Qt.Key_Right: 1, Qt.Key_Down: -1, Qt.Key_Left: -1}
+        if event.key() in schritte:
+            self.setValue(self._wert + schritte[event.key()])
+        else:
+            super().keyPressEvent(event)
 
 
 class Kennzahl(QFrame):

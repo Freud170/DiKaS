@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dikas.buchhaltung import EMAIL_MUSTER, REGELN, BeitragVorschau, status_am
+from dikas.buchhaltung import EMAIL_MUSTER, REGELN, BeitragVorschau
 from dikas.db.models import Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text, text_zu_cent
 from dikas.ui import stil
@@ -258,9 +258,11 @@ class KontoDialog(QDialog):
 
 
 class BuchungDialog(QDialog):
-    def __init__(self, konten: list[Konto], parent=None):
+    """Neue Buchung – oder mit `vorlage` (siehe buchhaltung.eingabe_aus_buchung) eine Korrektur."""
+
+    def __init__(self, konten: list[Konto], parent=None, vorlage: dict | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Neue Buchung")
+        self.setWindowTitle("Buchung korrigieren" if vorlage else "Neue Buchung")
         self.konten = konten
         self.betrag_cent = 0
 
@@ -278,6 +280,15 @@ class BuchungDialog(QDialog):
         self.beleg = QLineEdit()
 
         self.form = stil.formular(QFormLayout(self))
+        if vorlage:
+            erklaerung = QLabel(
+                "Ändern sich Betrag, Konten, Art oder Datum, wird die alte Buchung storniert und "
+                "eine neue angelegt – so bleibt nachvollziehbar, was korrigiert wurde. "
+                "Reine Text-/Beleg-Änderungen werden direkt übernommen."
+            )
+            erklaerung.setObjectName("hinweis")
+            erklaerung.setWordWrap(True)
+            self.form.addRow(erklaerung)
         self.form.addRow("Buchungsart:", self.art)
         self.form.addRow("", self.hinweis)
         self.form.addRow("Datum:", self.datum)
@@ -290,7 +301,19 @@ class BuchungDialog(QDialog):
 
         self.art.currentIndexChanged.connect(self._art_geaendert)
         self._art_geaendert()
-        self.resize(440, self.sizeHint().height())
+        if vorlage:
+            self._vorbelegen(vorlage)
+        self.resize(460, self.sizeHint().height())
+
+    def _vorbelegen(self, v: dict):
+        self.art.setCurrentIndex(self.art.findData(v["art"]))
+        self.konto.setCurrentIndex(self.konto.findData(v["konto_id"]))
+        if v["gegenkonto_id"] is not None:
+            self.gegen.setCurrentIndex(self.gegen.findData(v["gegenkonto_id"]))
+        self.datum.setDate(_qdate(v["datum"]))
+        self.betrag.setText(cent_zu_text(v["betrag_cent"], waehrung=False))
+        self.text.setText(v["text"])
+        self.beleg.setText(v["beleg"])
 
     def _fuelle(self, box: QComboBox, typen: tuple[KontoTyp, ...]):
         box.clear()
@@ -396,7 +419,10 @@ class BeitragDialog(QDialog):
         # können dazugenommen werden, bereits Abgebuchte sind gesperrt.
         self.tabelle = stil.tabelle(["", "Mitglied", "Status", "Eintritt", "Beitrag", "Hinweis"], rechts=[4])
         self.tabelle.setSelectionMode(QAbstractItemView.NoSelection)
-        self.tabelle.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # Namen immer ganz zeigen; der (lange) Hinweis bekommt den Rest und wird notfalls gekürzt
+        self.tabelle.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.tabelle.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.tabelle.setTextElideMode(Qt.ElideRight)
         self.tabelle.itemChanged.connect(self._haken_geaendert)
         self.summe = QLabel()
         self.ausgelassen = QLabel()
@@ -452,7 +478,6 @@ class BeitragDialog(QDialog):
 
     def _aktualisiere_vorschau(self):
         jahr = self.jahr.value()
-        stichtag = date(jahr, 1, 1)
         self.vorschau_titel.setText(f"Vorschau – Beitrag {jahr}")
         betraege = self._lese_betraege()
         t = self.tabelle
@@ -470,6 +495,8 @@ class BeitragDialog(QDialog):
             + [(m, False, f"Eintritt nach 01.01.{jahr}") for m in v.spaeter_eingetreten]
             + [(m, False, "ohne Eintrittsdatum") for m in v.ohne_eintrittsdatum]
             + [(m, None, f"bereits für {jahr} abgebucht") for m in v.bereits_abgebucht]
+            + [(m, None, f"kein Beitrag für „{v.status_je_konto[m.id].anzeige}“ eingetragen")
+               for m in v.ohne_beitrag]
         )
         for mitglied, vorauswahl, hinweis in eintraege:
             zeile = t.rowCount()
@@ -481,13 +508,14 @@ class BeitragDialog(QDialog):
                 haken.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
                 an = self._von_hand.get(mitglied.id, vorauswahl)
                 haken.setCheckState(Qt.Checked if an else Qt.Unchecked)
-            betrag = QTableWidgetItem(cent_zu_text(v.betrag_je_konto[mitglied.id]))
+            cent = v.betrag_je_konto.get(mitglied.id, 0)
+            betrag = QTableWidgetItem(cent_zu_text(cent) if cent else "–")
             betrag.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             eintritt = mitglied.eintrittsdatum.strftime("%d.%m.%Y") if mitglied.eintrittsdatum else "–"
             items = [
                 haken,
                 QTableWidgetItem(mitglied.name),
-                QTableWidgetItem(status_am(mitglied, stichtag).anzeige),
+                QTableWidgetItem(v.status_je_konto[mitglied.id].anzeige),
                 QTableWidgetItem(eintritt),
                 betrag,
                 QTableWidgetItem(hinweis),
@@ -496,7 +524,7 @@ class BeitragDialog(QDialog):
                 if vorauswahl is not True and spalte:
                     item.setForeground(QColor(stil.INAKTIV))
                 t.setItem(zeile, spalte, item)
-            self._zeilen.append((mitglied, v.betrag_je_konto[mitglied.id]))
+            self._zeilen.append((mitglied, cent))
         t.blockSignals(False)
         self._zeige_summe()
 

@@ -36,7 +36,7 @@ Ein Privatkonto im Minus heißt: Das Mitglied schuldet dem Verein noch etwas.
 
 ### Beitragslauf
 
-„Beiträge abbuchen“: **Beitragsjahr** wählen, Betrag je Status (Füxe / Aktive / Alumni /
+„Beiträge abbuchen“: **Beitragsjahr** wählen (‹ 2026 ›, auch per Mausrad/Pfeiltasten), Betrag je Status (Füxe / Aktive / Alumni /
 Fördermitglieder / Ehrenmitglieder, 0 = beitragsfrei) eintragen und die Zielkasse wählen.
 In der Vorschau wird per **Häkchen** festgelegt, wer belastet wird. Bei einem Fehler wird
 gar nichts gebucht.
@@ -46,7 +46,11 @@ gar nichts gebucht.
 - **Nicht angehakt, aber wählbar** sind Mitglieder, die **erst nach dem 01.01. eingetreten**
   sind (z. B. am 02.01.) oder **kein Eintrittsdatum** haben.
 - **Gesperrt** ist, wer für das Jahr **schon einen Beitrag** hat (Schutz vor
-  Doppelabbuchung; ein Storno gibt das Jahr wieder frei).
+  Doppelabbuchung; ein Storno gibt das Jahr wieder frei) oder für wessen Status **kein
+  Beitrag** eingetragen ist (z. B. Ehrenmitglieder mit 0 €) – jeweils mit Hinweis.
+- **Maßgeblicher Status**: Wer am 01.01. schon Mitglied war, zahlt nach dem Status am 01.01.
+  Wer im Laufe des Jahres eingetreten ist, zahlt nach dem Status, den er in dem Jahr erreicht
+  hat (Stand 31.12. bzw. heute, wenn das Jahr noch läuft).
 
 Das Buchungsdatum steht standardmäßig auf dem 01.01. des Beitragsjahres, damit nachgeholte
 Beiträge in der Auswertung im richtigen Jahr erscheinen.
@@ -108,6 +112,10 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
 - Beträge werden in Cent (Ganzzahl) gespeichert.
 - Buchungen werden nie gelöscht, sondern **storniert** (automatische Gegenbuchung).
+- **Korrigieren** (Doppelklick auf eine Buchung, Knopf über der Buchungsliste oder
+  Rechtsklick): Dialog mit allen Werten vorbefüllt. Reine Text-/Beleg-Änderungen werden direkt
+  übernommen; ändern sich Betrag, Konten, Art oder Datum, wird die alte Buchung (mit ihrem
+  Datum) storniert und eine neue angelegt. Ein Beitragsjahr bleibt dabei erhalten.
 - **Deaktivieren** (Konto bearbeiten): z. B. ausgetreten, aber noch sichtbar, keine neuen Buchungen.
 - **Löschen** geht nur bei Privatkonten mit **Saldo 0**:
   - ohne Buchungen → Konto wird wirklich entfernt
@@ -163,6 +171,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_loeschen.py` | Privatkonto löschen/archivieren/wiederherstellen inkl. Oberfläche |
 | `test_beitragsjahr.py` | Eintrittsdatum, Stichtag 01.01., Doppelschutz, Nachholen alter Jahre, DB-Update |
 | `test_statusverlauf.py` | Statuswechsel mit Datum, Status am Stichtag, Beitrag nach damaligem Status, Editor |
+| `test_korrektur.py` | Buchungen korrigieren, Beitragsstatus bei Eintritt im Laufe des Jahres |
 | `test_beitrag_auswahl.py` | Status FM/EM, manuelle Auswahl im Beitragslauf, Doppelschutz |
 | `test_namen.py` | Vor-/Nachname: Pflicht, Aufteilen alter Namen, Sortierung, Anrede, Dialog |
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |

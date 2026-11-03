@@ -278,13 +278,31 @@ class TestBeitragDialog:
         return BeitragDialog(kassen, vorschau, heute=date(2026, 10, 29))
 
     def test_vorschau_aktualisiert_sich(self, dialog):
-        assert dialog.tabelle.rowCount() == 0
+        # Alle aktiven Mitglieder stehen immer in der Liste, ausgewählt nur die mit Beitrag
+        assert dialog.tabelle.rowCount() == 3
+        assert len(dialog.ausgewaehlte()) == 0
         dialog.felder[St.FUX].setText("30")
-        assert dialog.tabelle.rowCount() == 1
+        assert len(dialog.ausgewaehlte()) == 1
         dialog.felder[St.AKTIVER].setText("60")
         dialog.felder[St.ALUMNI].setText("100,50")
-        assert dialog.tabelle.rowCount() == 3
+        assert len(dialog.ausgewaehlte()) == 3
         assert "190,50 €" in dialog.summe.text()
+
+    def test_ohne_beitrag_ausgegraut_mit_grund(self, dialog):
+        dialog.felder[St.AKTIVER].setText("60")
+        z = next(z for z in range(dialog.tabelle.rowCount()) if dialog.tabelle.item(z, 1).text() == "Alfred")
+        assert not dialog.tabelle.item(z, 0).flags() & Qt.ItemIsUserCheckable
+        assert dialog.tabelle.item(z, 5).text() == "kein Beitrag für „Alumni“ eingetragen"
+        assert dialog.tabelle.item(z, 4).text() == "–"
+
+    def test_jahr_umschalten(self, dialog):
+        dialog.jahr.weiter.click()
+        assert dialog.jahr.value() == 2027
+        assert not dialog.jahr.weiter.isEnabled()  # höchstens nächstes Jahr
+        dialog.jahr.zurueck.click()
+        dialog.jahr.zurueck.click()
+        assert dialog.jahr.value() == 2025
+        assert dialog.text.text() == "Jahresbeitrag 2025"
 
     def test_ungueltige_eingabe_in_vorschau(self, dialog):
         dialog.felder[St.FUX].setText("abc")

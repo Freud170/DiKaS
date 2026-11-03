@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy.orm import sessionmaker
 
 from dikas import __version__, buchhaltung
-from dikas.db.models import Konto, KontoTyp, MitgliedStatus
+from dikas.db.models import Buchung, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
 from dikas.ui.auswertung import AuswertungDialog
@@ -106,18 +106,36 @@ class Hauptfenster(QMainWindow):
         rechts = Panel("")
         self.buchungen_titel = rechts.titel
         self.buchungen_info = rechts.info
-        alle = QToolButton()
-        alle.setText("Alle anzeigen")
-        alle.setToolTip("Auswahl aufheben und alle Buchungen anzeigen")
-        alle.clicked.connect(self.zeige_alle_buchungen)
-        rechts.kopf.addWidget(alle)
+        # Aktionen für die ausgewählte Buchung in eigener Zeile über der Liste
+        # (auch per Doppelklick/Rechtsklick)
+        aktionen = QHBoxLayout()
+        for text, icon, tipp, slot in (
+            ("Korrigieren", "MailMessageNew", "Ausgewählte Buchung korrigieren (Doppelklick)",
+             self.korrigiere_auswahl),
+            ("Stornieren", "EditUndo", "Ausgewählte Buchung stornieren (Gegenbuchung)", self.storniere_auswahl),
+            ("Alle anzeigen", None, "Auswahl aufheben und alle Buchungen anzeigen", self.zeige_alle_buchungen),
+        ):
+            knopf = QToolButton()
+            knopf.setText(text)
+            knopf.setToolTip(tipp)
+            if icon:
+                knopf.setIcon(stil.symbol(icon))
+                knopf.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            knopf.clicked.connect(slot)
+            if text == "Alle anzeigen":
+                aktionen.addStretch()
+            aktionen.addWidget(knopf)
+        rechts.layout_.addLayout(aktionen)
+        self.buchungen_tabelle.itemDoubleClicked.connect(self.korrigiere_auswahl)
+        self.buchungen_tabelle.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.buchungen_tabelle.customContextMenuRequested.connect(self._buchungs_menue)
         rechts.layout_.addWidget(self.buchungen_tabelle)
 
         splitter = QSplitter()
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(links)
         splitter.addWidget(rechts)
-        splitter.setSizes([480, 840])
+        splitter.setSizes([600, 720])  # links genug Platz für Name, Bierspitz, Status, Eintritt, Saldo
 
         inhalt = QWidget()
         layout = QVBoxLayout(inhalt)
@@ -147,7 +165,6 @@ class Hauptfenster(QMainWindow):
             (
                 ("Neue Buchung", "ListAdd", "Ctrl+N", self.neue_buchung, True),
                 ("Beiträge abbuchen", "DocumentNew", "Ctrl+B", self.beitraege_abbuchen, False),
-                ("Stornieren", "EditUndo", None, self.storniere_auswahl, False),
             ),
             (
                 ("Neues Konto", "ContactNew", "Ctrl+K", self.neues_konto, False),
@@ -416,6 +433,46 @@ class Hauptfenster(QMainWindow):
         werte = dialog.werte()
         if self._ausfuehren(lambda s: buchhaltung.beitraege_abbuchen(s, **werte)):
             self.statusBar().showMessage("Beiträge wurden gebucht.", 5000)
+
+    def _buchungs_menue(self, position):
+        if self.buchungen_tabelle.itemAt(position) is None:
+            return
+        menue = QMenu(self)
+        menue.addAction(stil.symbol("MailMessageNew"), "Korrigieren …", self.korrigiere_auswahl)
+        menue.addAction(stil.symbol("EditUndo"), "Stornieren", self.storniere_auswahl)
+        menue.exec(self.buchungen_tabelle.viewport().mapToGlobal(position))
+
+    def _gewaehlte_buchung_id(self) -> int | None:
+        zeilen = self.buchungen_tabelle.selectionModel().selectedRows()
+        if not zeilen:
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Buchung auswählen.")
+            return None
+        return self.buchungen_tabelle.item(zeilen[0].row(), 0).data(Qt.UserRole)
+
+    def korrigiere_auswahl(self, *_):
+        buchung_id = self._gewaehlte_buchung_id()
+        if buchung_id is None:
+            return
+        with self.Session() as session:
+            buchung = session.get(Buchung, buchung_id)
+            if buchung.ist_storno or buchung.ist_storniert:
+                QMessageBox.information(
+                    self, "Hinweis",
+                    "Stornierte Buchungen und Stornobuchungen können nicht korrigiert werden.",
+                )
+                return
+            try:
+                vorlage = buchhaltung.eingabe_aus_buchung(buchung)
+            except buchhaltung.BuchhaltungsFehler as fehler:
+                QMessageBox.information(self, "Hinweis", str(fehler))
+                return
+            konten = buchhaltung.konten(session, nur_aktive=True)
+        dialog = BuchungDialog(konten, self, vorlage=vorlage)
+        if dialog.exec() != BuchungDialog.Accepted:
+            return
+        werte = dialog.werte()
+        if self._ausfuehren(lambda s: buchhaltung.buchung_korrigieren(s, buchung_id, **werte)):
+            self.statusBar().showMessage("Buchung korrigiert.", 5000)
 
     def storniere_auswahl(self):
         zeilen = self.buchungen_tabelle.selectionModel().selectedRows()

@@ -405,6 +405,69 @@ def stornieren(session: Session, buchung_id: int, datum: date | None = None) -> 
     return storno
 
 
+def eingabe_aus_buchung(buchung: Buchung) -> dict:
+    """Die Werte einer Buchung so, wie sie in `buchen` eingegeben wurden (für Korrekturen)."""
+    regel = REGELN.get(buchung.art)
+    if regel is None:
+        raise BuchhaltungsFehler(f"Eine {buchung.art.anzeige}-Buchung kann nicht korrigiert werden.")
+    konto, gegen = (
+        (buchung.soll_konto_id, buchung.haben_konto_id) if regel.konto_im_soll
+        else (buchung.haben_konto_id, buchung.soll_konto_id)
+    )
+    return {
+        "art": buchung.art,
+        "konto_id": konto,
+        "gegenkonto_id": gegen if regel.gegen_typen is not None else None,
+        "betrag_cent": buchung.betrag_cent,
+        "text": buchung.text,
+        "datum": buchung.datum,
+        "beleg": buchung.beleg,
+    }
+
+
+def buchung_korrigieren(
+    session: Session,
+    buchung_id: int,
+    art: Buchungsart,
+    konto_id: int,
+    betrag_cent: int,
+    text: str,
+    datum: date,
+    beleg: str = "",
+    gegenkonto_id: int | None = None,
+) -> Buchung:
+    """Korrigiert eine Buchung, ohne die Historie zu verfälschen.
+
+    Ändern sich nur Text oder Beleg-Nr., wird die Buchung direkt angepasst. Sonst wird sie
+    storniert (mit ihrem eigenen Datum, damit Kontostände zu früheren Stichtagen stimmen)
+    und eine neue, korrigierte Buchung angelegt. Ein Beitragsjahr bleibt erhalten.
+    Rückgabe: die gültige Buchung (angepasste oder neue).
+    """
+    original = session.get(Buchung, buchung_id)
+    if original is None:
+        raise BuchhaltungsFehler(f"Buchung {buchung_id} existiert nicht.")
+    if original.ist_storno:
+        raise BuchhaltungsFehler("Eine Stornobuchung kann nicht korrigiert werden.")
+    if original.ist_storniert:
+        raise BuchhaltungsFehler("Diese Buchung wurde bereits storniert und kann nicht mehr korrigiert werden.")
+    vorher = eingabe_aus_buchung(original)
+    neu = {"art": art, "konto_id": konto_id, "gegenkonto_id": gegenkonto_id,
+           "betrag_cent": betrag_cent, "datum": datum}
+    if all(vorher[k] == v for k, v in neu.items()):
+        if not text.strip():
+            raise BuchhaltungsFehler("Bitte einen Buchungstext angeben.")
+        original.text, original.beleg = text.strip(), beleg.strip()
+        session.flush()
+        return original
+
+    beitragsjahr = original.beitragsjahr if art == Buchungsart.BEITRAG else None
+    stornieren(session, original.id, original.datum)
+    ersatz = buchen(session, art, konto_id, betrag_cent, text, datum, beleg, gegenkonto_id)
+    ersatz.beitragsjahr = beitragsjahr
+    session.flush()
+    return ersatz
+
+
 def buchungen(
     session: Session,
     konto_id: int | None = None,
@@ -443,7 +506,9 @@ class BeitragVorschau:
     bereits_abgebucht: list[Konto]  # hat für das Jahr schon einen (nicht stornierten) Beitrag
     spaeter_eingetreten: list[Konto]  # Eintritt nach dem 01.01. des Jahres
     ohne_eintrittsdatum: list[Konto]
-    betrag_je_konto: dict[int, int] = field(default_factory=dict)  # für alle oben genannten
+    betrag_je_konto: dict[int, int] = field(default_factory=dict)  # alle mit Beitrag > 0
+    ohne_beitrag: list[Konto] = field(default_factory=list)  # für ihren Status ist kein Beitrag eingetragen
+    status_je_konto: dict[int, MitgliedStatus] = field(default_factory=dict)  # maßgeblicher Status
 
     @property
     def summe(self) -> int:
@@ -465,35 +530,53 @@ def _schon_abgebucht(session: Session, jahr: int) -> set[int]:
     return {b.soll_konto_id for b in beitraege if not b.ist_storniert}
 
 
+def beitragsstatus(konto: Konto, jahr: int, heute: date | None = None) -> MitgliedStatus | None:
+    """Status, nach dem der Beitrag für `jahr` berechnet wird.
+
+    Wer am 01.01. schon Mitglied war: Status am 01.01. Wer erst im Laufe des Jahres
+    eingetreten ist (oder kein Eintrittsdatum hat): Status am Jahresende bzw. heute,
+    falls das Jahr noch läuft – also der Status, den das Mitglied in dem Jahr erreicht hat.
+    """
+    stichtag = date(jahr, 1, 1)
+    if konto.eintrittsdatum is not None and konto.eintrittsdatum <= stichtag:
+        return status_am(konto, stichtag)
+    return status_am(konto, min(date(jahr, 12, 31), heute or date.today()))
+
+
 def beitrag_vorschau(
-    session: Session, betraege: dict[MitgliedStatus, int], jahr: int
+    session: Session, betraege: dict[MitgliedStatus, int], jahr: int, heute: date | None = None
 ) -> BeitragVorschau:
     """Fällig sind aktive Mitglieder, die am 01.01. des Jahres schon eingetreten waren
-    und für das Jahr noch keinen Beitrag haben. Betrag je Status in Cent; maßgeblich ist
-    der Status am 01.01. des Jahres (siehe `status_am`)."""
+    und für das Jahr noch keinen Beitrag haben. Betrag je Status in Cent, Status siehe
+    `beitragsstatus`. Alle anderen aktiven Mitglieder werden mit Grund aufgelistet."""
     stichtag = date(jahr, 1, 1)
     schon = _schon_abgebucht(session, jahr)
     mitglieder = session.scalars(
         select(Konto)
         .where(Konto.typ == KontoTyp.PRIVAT, Konto.aktiv, ~Konto.geloescht)
-        .order_by(Konto.status, Konto.nachname, Konto.vorname)
+        .order_by(Konto.nachname, Konto.vorname)
     )
-    faellig, bereits, spaeter, ohne_datum = [], [], [], []
-    betrag_je_konto = {}
+    faellig, bereits, spaeter, ohne_datum, ohne_beitrag = [], [], [], [], []
+    betrag_je_konto, status_je_konto = {}, {}
     for m in mitglieder:
-        betrag = betraege.get(status_am(m, stichtag), 0)
-        if betrag <= 0:
-            continue
-        betrag_je_konto[m.id] = betrag
+        status = beitragsstatus(m, jahr, heute)
+        status_je_konto[m.id] = status
+        betrag = betraege.get(status, 0)
         if m.id in schon:
             bereits.append(m)
+        elif betrag <= 0:
+            ohne_beitrag.append(m)
         elif m.eintrittsdatum is None:
             ohne_datum.append(m)
         elif m.eintrittsdatum > stichtag:
             spaeter.append(m)
         else:
             faellig.append((m, betrag))
-    return BeitragVorschau(jahr, faellig, bereits, spaeter, ohne_datum, betrag_je_konto)
+        if betrag > 0:
+            betrag_je_konto[m.id] = betrag
+    return BeitragVorschau(
+        jahr, faellig, bereits, spaeter, ohne_datum, betrag_je_konto, ohne_beitrag, status_je_konto
+    )
 
 
 def beitraege_abbuchen(
