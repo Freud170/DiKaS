@@ -457,21 +457,18 @@ def buchungen_loeschen(session: Session, buchung_ids: Collection[int]) -> int:
     loeschen = zu_loeschende_buchungen(session, buchung_ids)
     if not loeschen:
         raise BuchhaltungsFehler("Keine Buchung ausgewählt.")
-    weg = {b.id for b in loeschen}
+    # Nur erlaubt, wenn sich die Wirkung auf jedes gelöschte (ausgeblendete) Konto insgesamt aufhebt
+    geloeschte_konten = {
+        k.id: k for b in loeschen for k in (b.soll_konto, b.haben_konto) if k.geloescht
+    }
+    for konto in geloeschte_konten.values():
+        if sum(b.wirkung_auf(konto) for b in loeschen) != 0:
+            raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen.")
+    # Die Reihenfolge (Storno vor Original wegen des Verweises) regelt SQLAlchemy beim Flush
     for b in loeschen:
-        for konto in (b.soll_konto, b.haben_konto):
-            if not konto.geloescht:
-                continue
-            # Nur erlaubt, wenn sich die Wirkung auf das gelöschte Konto insgesamt aufhebt
-            if sum(x.wirkung_auf(konto) for x in loeschen) != 0:
-                raise BuchhaltungsFehler(
-                    f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen."
-                )
-    # Stornos zuerst, weil sie auf ihre Originalbuchung verweisen
-    for b in sorted(loeschen, key=lambda b: not b.ist_storno):
         session.delete(b)
-        session.flush()
-    return len(weg)
+    session.flush()
+    return len(loeschen)
 
 
 def eingabe_aus_buchung(buchung: Buchung) -> dict:

@@ -141,7 +141,8 @@ class TestOberflaeche:
         monkeypatch.setattr(QMessageBox, "question", lambda *a: fragen.append(a[2]) or QMessageBox.Yes)
         fenster.buchungen_tabelle.selectRow(zeile(fenster, "Storno: Tippfehler"))
         fenster.loesche_auswahl()
-        assert "2 Buchung(en)" in fragen[-1] and "Storno-Buchung(en)" in fragen[-1]
+        assert "2 Buchung(en)" in fragen[-1]
+        assert "1 weitere Buchung(en) werden mitgelöscht" in fragen[-1]  # hier: das Original
         assert texte(fenster) == ["Richtig"]
         assert len(sicherung.sicherungen(fenster.pfad)) == 1  # vorher gesichert
 
@@ -169,7 +170,126 @@ class TestOberflaeche:
         assert "auswählen" in meldungen[-1]
 
 
+def markiere(w, *texte_):
+    t = w.buchungen_tabelle
+    t.clearSelection()
+    for text in texte_:
+        t.selectionModel().select(t.model().index(zeile(w, text), 0),
+                                  QItemSelectionModel.Select | QItemSelectionModel.Rows)
+
+
+class TestReviewPunkte:
+    """Absicherung der Befunde aus dem Code-Review vom 03.11.2026."""
+
+    def test_nur_eine_sicherung_pro_sitzung(self, fenster, monkeypatch):
+        monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.Yes)
+        for text in ("Richtig", "Tippfehler"):
+            markiere(fenster, text)
+            fenster.loesche_auswahl()
+        assert texte(fenster) == []
+        assert len(sicherung.sicherungen(fenster.pfad)) == 1
+
+    def test_warnung_bei_gueltigem_jahresbeitrag(self, fenster, monkeypatch):
+        with fenster.Session.begin() as s:
+            v = Verein(s)
+            kasse = v.kasse("Beitragskasse")
+            v.mitglied("Anna Schulz")
+            v.beitragslauf(kasse, aktiver="60", jahr=2026, text="Jahresbeitrag 2026")
+        fenster.aktualisieren()
+        fragen = []
+        monkeypatch.setattr(QMessageBox, "question", lambda *a: fragen.append(a[2]) or QMessageBox.No)
+        markiere(fenster, "Jahresbeitrag 2026")
+        fenster.loesche_auswahl()
+        assert "gültige Jahresbeiträge" in fragen[-1] and "2026" in fragen[-1]
+
+    def test_veraltete_liste_meldet_fehler(self, fenster, monkeypatch):
+        meldungen = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a: meldungen.append(a[2]))
+        markiere(fenster, "Richtig")
+        with fenster.Session.begin() as s:  # Buchung verschwindet „hinter dem Rücken“ der Liste
+            bh.buchungen_loeschen(s, [b.id for b in bh.buchungen(s) if b.text == "Richtig"])
+        fenster.loesche_auswahl()
+        assert "existiert nicht" in meldungen[-1]
+        assert "Richtig" not in texte(fenster)  # Liste neu geladen
+
+    def test_mehrere_stornieren(self, fenster, monkeypatch):
+        with fenster.Session.begin() as s:
+            v = Verein(s)
+            tom = next(k for k in bh.konten(s) if k.name == "Tom Becker")
+            v.einzahlung(tom, "1", "Zweite")
+        fenster.aktualisieren()
+        fragen = []
+        monkeypatch.setattr(QMessageBox, "question", lambda *a: fragen.append(a[2]) or QMessageBox.Yes)
+        markiere(fenster, "Richtig", "Zweite", "Tippfehler")  # Tippfehler ist schon storniert
+        fenster.storniere_auswahl()
+        assert "2 Buchungen wirklich stornieren" in fragen[-1] and "übersprungen" in fragen[-1]
+        with fenster.Session() as s:
+            assert {b.text for b in bh.buchungen(s) if b.ist_storniert} == {"Richtig", "Zweite", "Tippfehler"}
+
+    def test_stornieren_nur_bereits_stornierte(self, fenster, monkeypatch):
+        meldungen = []
+        monkeypatch.setattr(QMessageBox, "information", lambda *a: meldungen.append(a[2]))
+        markiere(fenster, "Tippfehler")
+        fenster.storniere_auswahl()
+        assert "bereits storniert" in meldungen[-1]
+
+    def test_korrigieren_bei_mehrfachauswahl(self, fenster, monkeypatch):
+        meldungen = []
+        monkeypatch.setattr(QMessageBox, "information", lambda *a: meldungen.append(a[2]))
+        markiere(fenster, "Richtig", "Tippfehler")
+        fenster.korrigiere_auswahl()
+        assert "genau eine Buchung" in meldungen[-1]
+
+    def test_doppelklick_korrigiert_angeklickte_zeile(self, fenster, monkeypatch):
+        from dikas.ui.dialoge import BuchungDialog
+        geoeffnet = []
+        monkeypatch.setattr(BuchungDialog, "exec", lambda d: geoeffnet.append(d.text.text()) or 0)
+        markiere(fenster, "Tippfehler")  # andere Zeile markiert …
+        item = fenster.buchungen_tabelle.item(zeile(fenster, "Richtig"), 3)
+        fenster.korrigiere_auswahl(item)  # … aber „Richtig“ doppelt angeklickt
+        assert geoeffnet == ["Richtig"]
+
+    def gewaehlt(self, w):
+        t = w.buchungen_tabelle
+        return sorted(t.item(z.row(), 3).text() for z in t.selectionModel().selectedRows())
+
+    def test_rechtsklick_waehlt_angeklickte_zeile(self, fenster):
+        markiere(fenster, "Tippfehler")
+        fenster._auswahl_fuer_rechtsklick(zeile(fenster, "Richtig"))
+        assert self.gewaehlt(fenster) == ["Richtig"]
+
+    def test_rechtsklick_in_mehrfachauswahl_behaelt_auswahl(self, fenster):
+        markiere(fenster, "Tippfehler", "Richtig")
+        fenster._auswahl_fuer_rechtsklick(zeile(fenster, "Richtig"))
+        assert self.gewaehlt(fenster) == ["Richtig", "Tippfehler"]
+
+
 class TestUpdate:
+    @pytest.mark.parametrize("rueckgabe, startet", [((False, -1), False), ((True, 4711), True), (False, False), (True, True)])
+    def test_startergebnis_wird_ausgewertet(self, fenster, monkeypatch, tmp_path, rueckgabe, startet):
+        """PySide6 liefert (erfolgreich, pid) – bei Fehlstart darf DiKaS nicht schließen."""
+        warnungen, beendet = [], []
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(tmp_path / "DiKaS-Setup-9.exe"), ""))
+        monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.Yes)
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a: warnungen.append(a[2]))
+        monkeypatch.setattr(QProcess, "startDetached", lambda *a: rueckgabe)
+        monkeypatch.setattr(QApplication, "quit", lambda *a: beendet.append(True))
+        fenster.update_installieren()
+        assert bool(beendet) == startet
+        assert bool(warnungen) == (not startet)
+
+    def test_echter_fehlstart(self, fenster, monkeypatch, tmp_path):
+        """Ohne Nachbildung: eine nicht vorhandene Datei lässt sich wirklich nicht starten."""
+        warnungen, beendet = [], []
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(tmp_path / "gibt-es-nicht.exe"), ""))
+        monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.Yes)
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a: warnungen.append(a[2]))
+        monkeypatch.setattr(QApplication, "quit", lambda *a: beendet.append(True))
+        fenster.update_installieren()
+        assert warnungen and not beendet
+
     def test_nur_in_installierter_version(self, fenster, monkeypatch):
         meldungen = []
         monkeypatch.setattr(QMessageBox, "information", lambda *a: meldungen.append(a[2]))

@@ -161,7 +161,11 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
 - Buchhalterisch sauber ist **Stornieren** (automatische Gegenbuchung).
 - **Löschen** (Knopf an der Buchungsliste, Entf-Taste oder Rechtsklick; mehrere per
   Strg/Umschalt markierbar) entfernt Buchungen endgültig – für eine übersichtliche Liste.
-  Storno-Paare werden immer gemeinsam gelöscht. Vorher wird automatisch gesichert.
+  Storno-Paare werden immer gemeinsam gelöscht. Vor dem ersten Löschen einer Sitzung wird
+  automatisch gesichert (nur einmal, damit ältere Sicherungen nicht verdrängt werden). Sind
+  gültige Jahresbeiträge dabei, warnt DiKaS: Das Mitglied ist danach wieder fällig.
+- **Mehrfachauswahl:** Stornieren wirkt auf alle markierten Buchungen (bereits stornierte
+  werden übersprungen); Korrigieren geht immer nur für eine Buchung (Doppelklick).
 - **Korrigieren** (Doppelklick auf eine Buchung, Knopf über der Buchungsliste oder
   Rechtsklick): Dialog mit allen Werten vorbefüllt. Reine Text-/Beleg-Änderungen werden direkt
   übernommen; ändern sich Betrag, Konten, Art oder Datum, wird die alte Buchung (mit ihrem

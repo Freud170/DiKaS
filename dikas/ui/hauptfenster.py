@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QTableWidget,
+    QTableWidgetItem,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -30,7 +31,7 @@ from sqlalchemy.orm import sessionmaker
 
 from dikas import __version__, buchhaltung, datenaustausch, sicherung
 from dikas.db import init_db
-from dikas.db.models import Buchung, Konto, KontoTyp, MitgliedStatus
+from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
 from dikas.ui.auswertung import AuswertungDialog
@@ -63,6 +64,7 @@ class Hauptfenster(QMainWindow):
         super().__init__()
         self.Session = session_factory
         self.db_pfad = db_pfad
+        self._vor_loeschen_gesichert = False  # siehe _sichern_vor_loeschen
         self.setWindowTitle(f"DiKaS {__version__} – {db_pfad}")
         self.resize(1320, 780)
 
@@ -387,8 +389,15 @@ class Hauptfenster(QMainWindow):
         )
         if antwort != QMessageBox.Yes:
             return
-        if not QProcess.startDetached(setup, self.UPDATE_PARAMETER):
-            QMessageBox.warning(self, "Update", "Der Installer konnte nicht gestartet werden.")
+        # PySide6 liefert (erfolgreich, pid) zurück – nur bei echtem Start DiKaS beenden
+        ergebnis = QProcess.startDetached(setup, self.UPDATE_PARAMETER)
+        gestartet = ergebnis[0] if isinstance(ergebnis, tuple) else bool(ergebnis)
+        if not gestartet:
+            QMessageBox.warning(
+                self, "Update",
+                "Der Installer konnte nicht gestartet werden (evtl. vom Virenscanner blockiert).\n"
+                "DiKaS bleibt geöffnet – bitte die Setup-Datei per Doppelklick starten.",
+            )
             return
         QApplication.quit()
 
@@ -547,8 +556,10 @@ class Hauptfenster(QMainWindow):
             self.statusBar().showMessage("Beiträge wurden gebucht.", 5000)
 
     def _buchungs_menue(self, position):
-        if self.buchungen_tabelle.itemAt(position) is None:
+        item = self.buchungen_tabelle.itemAt(position)
+        if item is None:
             return
+        self._auswahl_fuer_rechtsklick(item.row())
         menue = QMenu(self)
         menue.addAction(stil.symbol("MailMessageNew"), "Korrigieren …", self.korrigiere_auswahl)
         menue.addAction(stil.symbol("EditUndo"), "Stornieren", self.storniere_auswahl)
@@ -556,23 +567,66 @@ class Hauptfenster(QMainWindow):
         menue.addAction(stil.symbol("EditDelete"), "Löschen …", self.loesche_auswahl)
         menue.exec(self.buchungen_tabelle.viewport().mapToGlobal(position))
 
-    def loesche_auswahl(self):
-        zeilen = self.buchungen_tabelle.selectionModel().selectedRows()
+    def _auswahl_fuer_rechtsklick(self, zeile: int):
+        """Rechtsklick auf eine nicht markierte Zeile: nur diese auswählen (wie im Explorer).
+        Rechtsklick in eine bestehende Mehrfachauswahl lässt die Auswahl stehen."""
+        markiert = {z.row() for z in self.buchungen_tabelle.selectionModel().selectedRows()}
+        if zeile not in markiert:
+            self.buchungen_tabelle.selectRow(zeile)
+
+    def _gewaehlte_buchung_ids(self) -> list[int]:
+        """IDs aller markierten Buchungen in Tabellenreihenfolge; Hinweis, wenn keine markiert ist."""
+        zeilen = sorted(z.row() for z in self.buchungen_tabelle.selectionModel().selectedRows())
         if not zeilen:
-            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine oder mehrere Buchungen auswählen.")
+            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Buchung auswählen.")
+        return [self.buchungen_tabelle.item(z, 0).data(Qt.UserRole) for z in zeilen]
+
+    def _sichern_vor_loeschen(self) -> bool:
+        """Höchstens eine Sicherung pro Sitzung, damit Löschaktionen ältere Stände nicht verdrängen."""
+        if self._vor_loeschen_gesichert or not Path(self.db_pfad).exists():
+            return True
+        try:
+            sicherung.sichern(Path(self.db_pfad))
+        except (OSError, sqlite3.Error) as fehler:
+            QMessageBox.warning(self, "Fehler", f"Sicherung vor dem Löschen fehlgeschlagen – nichts gelöscht.\n{fehler}")
+            return False
+        self._vor_loeschen_gesichert = True
+        return True
+
+    def loesche_auswahl(self):
+        ids = self._gewaehlte_buchung_ids()
+        if not ids:
             return
-        ids = [self.buchungen_tabelle.item(z.row(), 0).data(Qt.UserRole) for z in zeilen]
-        with self.Session() as session:
-            loeschen = buchhaltung.zu_loeschende_buchungen(session, ids)
-            liste = "\n".join(
-                f"• {b.datum:%d.%m.%Y}  {b.art.anzeige}  {cent_zu_text(b.betrag_cent)}  {b.text}"
-                for b in loeschen[:12]
-            )
+        try:
+            with self.Session() as session:
+                loeschen = buchhaltung.zu_loeschende_buchungen(session, ids)
+                beitraege = [
+                    f"{b.soll_konto.name} {b.beitragsjahr}" for b in loeschen
+                    if b.art == Buchungsart.BEITRAG and b.beitragsjahr and not b.ist_storniert
+                ]
+                liste = "\n".join(
+                    f"• {b.datum:%d.%m.%Y}  {b.art.anzeige}  {cent_zu_text(b.betrag_cent)}  {b.text}"
+                    for b in loeschen[:12]
+                )
+        except buchhaltung.BuchhaltungsFehler as fehler:
+            QMessageBox.warning(self, "Fehler", f"{fehler}\nDie Liste wird neu geladen.")
+            self.aktualisieren()
+            return
         if len(loeschen) > 12:
             liste += f"\n… und {len(loeschen) - 12} weitere"
+        hinweise = []
         mitgenommen = len(loeschen) - len(set(ids))
-        zusatz = (f"\n\nDazu gehören {mitgenommen} Storno-Buchung(en), die mitgelöscht werden, "
-                  "damit die falsche Buchung nicht wieder gilt.") if mitgenommen else ""
+        if mitgenommen:
+            hinweise.append(
+                f"{mitgenommen} weitere Buchung(en) werden mitgelöscht: Original und Storno "
+                "gehören zusammen, sonst würde die falsche Buchung wieder gelten."
+            )
+        if beitraege:
+            hinweise.append(
+                "Achtung, darunter sind gültige Jahresbeiträge (" + ", ".join(beitraege) + "). "
+                "Diese Mitglieder sind danach im Beitragslauf für das Jahr wieder fällig."
+            )
+        zusatz = "".join(f"\n\n⚠ {h}" for h in hinweise)
         antwort = QMessageBox.question(
             self,
             "Buchungen löschen",
@@ -580,31 +634,28 @@ class Hauptfenster(QMainWindow):
             "Die Kontostände ändern sich entsprechend. Vorher wird automatisch gesichert "
             "(zurückholen über Schraubenschlüssel → Sicherungen).",
         )
-        if antwort != QMessageBox.Yes:
-            return
-        try:
-            if Path(self.db_pfad).exists():
-                sicherung.sichern(Path(self.db_pfad))
-        except (OSError, sqlite3.Error) as fehler:
-            QMessageBox.warning(self, "Fehler", f"Sicherung vor dem Löschen fehlgeschlagen – nichts gelöscht.\n{fehler}")
+        if antwort != QMessageBox.Yes or not self._sichern_vor_loeschen():
             return
         if self._ausfuehren(lambda s: buchhaltung.buchungen_loeschen(s, ids)):
             self.statusBar().showMessage(f"{len(loeschen)} Buchung(en) gelöscht.", 5000)
 
-    def _gewaehlte_buchung_id(self) -> int | None:
-        zeilen = self.buchungen_tabelle.selectionModel().selectedRows()
-        if not zeilen:
-            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Buchung auswählen.")
-            return None
-        return self.buchungen_tabelle.item(zeilen[0].row(), 0).data(Qt.UserRole)
-
-    def korrigiere_auswahl(self, *_):
-        buchung_id = self._gewaehlte_buchung_id()
-        if buchung_id is None:
+    def korrigiere_auswahl(self, item=None):
+        # Doppelklick: genau die angeklickte Zeile; sonst darf nur eine markiert sein
+        if isinstance(item, QTableWidgetItem):
+            ids = [self.buchungen_tabelle.item(item.row(), 0).data(Qt.UserRole)]
+        else:
+            ids = self._gewaehlte_buchung_ids()
+            if len(ids) > 1:
+                QMessageBox.information(
+                    self, "Hinweis", "Bitte genau eine Buchung zum Korrigieren auswählen."
+                )
+                return
+        if not ids:
             return
+        buchung_id = ids[0]
         with self.Session() as session:
             buchung = session.get(Buchung, buchung_id)
-            if buchung.ist_storno or buchung.ist_storniert:
+            if buchung is None or buchung.ist_storno or buchung.ist_storniert:
                 QMessageBox.information(
                     self, "Hinweis",
                     "Stornierte Buchungen und Stornobuchungen können nicht korrigiert werden.",
@@ -624,16 +675,29 @@ class Hauptfenster(QMainWindow):
             self.statusBar().showMessage("Buchung korrigiert.", 5000)
 
     def storniere_auswahl(self):
-        zeilen = self.buchungen_tabelle.selectionModel().selectedRows()
-        if not zeilen:
-            QMessageBox.information(self, "Hinweis", "Bitte zuerst eine Buchung auswählen.")
+        """Storniert alle markierten Buchungen (bereits stornierte und Stornos werden übersprungen)."""
+        ids = self._gewaehlte_buchung_ids()
+        if not ids:
             return
-        buchung_id = self.buchungen_tabelle.item(zeilen[0].row(), 0).data(Qt.UserRole)
-        antwort = QMessageBox.question(
-            self, "Stornieren", "Diese Buchung wirklich stornieren?\n(Es wird eine Gegenbuchung erzeugt.)"
+        with self.Session() as session:
+            buchungen = [session.get(Buchung, i) for i in ids]
+            stornierbar = [b.id for b in buchungen if b and not b.ist_storno and not b.ist_storniert]
+        uebersprungen = len(ids) - len(stornierbar)
+        if not stornierbar:
+            QMessageBox.information(
+                self, "Hinweis",
+                "Die ausgewählte Buchung wurde bereits storniert oder ist selbst ein Storno.",
+            )
+            return
+        frage = (
+            "Diese Buchung wirklich stornieren?" if len(stornierbar) == 1
+            else f"{len(stornierbar)} Buchungen wirklich stornieren?"
         )
+        if uebersprungen:
+            frage += f"\n({uebersprungen} bereits stornierte bzw. Storno-Buchung(en) werden übersprungen.)"
+        antwort = QMessageBox.question(self, "Stornieren", frage + "\n\n(Es werden Gegenbuchungen erzeugt.)")
         if antwort == QMessageBox.Yes:
-            self._ausfuehren(lambda s: buchhaltung.stornieren(s, buchung_id))
+            self._ausfuehren(lambda s: [buchhaltung.stornieren(s, i) for i in stornierbar])
 
     def _ausfuehren(self, aktion) -> bool:
         """Führt eine Änderung in einer Transaktion aus und zeigt Fehler an."""
