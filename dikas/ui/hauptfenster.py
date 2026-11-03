@@ -1,12 +1,14 @@
 """Hauptfenster: Kennzahlen oben, Kontenübersicht links, Buchungen des gewählten Kontos rechts."""
 
+import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QSize, QStandardPaths, Qt, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -24,7 +26,8 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy.orm import sessionmaker
 
-from dikas import __version__, buchhaltung
+from dikas import __version__, buchhaltung, datenaustausch
+from dikas.db import init_db
 from dikas.db.models import Buchung, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
@@ -188,11 +191,16 @@ class Hauptfenster(QMainWindow):
         leiste.addWidget(abstand)
         # Rechts nur ein Symbol mit Menü, damit die Leiste nicht überläuft
         menue = QMenu(self)
-        menue.addAction(stil.symbol("DocumentProperties"), "Einstellungen …", self.einstellungen)
+        menue.addAction(stil.symbol("DocumentSaveAs"), "Daten exportieren (für anderen PC) …", self.daten_exportieren)
+        menue.addAction(stil.symbol("DocumentOpen"), "Daten importieren (von anderem PC) …", self.daten_importieren)
+        menue.addSeparator()
         menue.addAction(stil.symbol("DocumentRevert"), "Sicherungen …", self.sicherungen)
+        menue.addAction(stil.symbol("FolderOpen"), "Datenordner öffnen", self.datenordner_oeffnen)
+        menue.addSeparator()
+        menue.addAction(stil.symbol("DocumentProperties"), "Einstellungen …", self.einstellungen)
         self.extras_knopf = QToolButton()
         self.extras_knopf.setIcon(stil.symbol("DocumentProperties"))
-        self.extras_knopf.setToolTip("Einstellungen und Sicherungen")
+        self.extras_knopf.setToolTip("Daten, Sicherungen und Einstellungen")
         self.extras_knopf.setMenu(menue)
         self.extras_knopf.setPopupMode(QToolButton.InstantPopup)
         leiste.addWidget(self.extras_knopf)
@@ -344,6 +352,71 @@ class Hauptfenster(QMainWindow):
         dialog.exec()
         if dialog.wiederhergestellt:
             self.aktualisieren()
+
+    # --- Datenaustausch zwischen PCs ----------------------------------------
+
+    def datenordner_oeffnen(self):
+        ordner = Path(self.db_pfad).parent
+        ordner.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(ordner)))
+
+    @staticmethod
+    def _dokumente() -> Path:
+        return Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation))
+
+    def daten_exportieren(self):
+        vorschlag = str(self._dokumente() / datenaustausch.export_dateiname())
+        ziel, _ = QFileDialog.getSaveFileName(
+            self, "Daten exportieren", vorschlag, "DiKaS-Daten (*.db)"
+        )
+        if not ziel:
+            return
+        try:
+            datenaustausch.exportieren(Path(self.db_pfad), Path(ziel))
+        except (OSError, ValueError, sqlite3.Error) as fehler:
+            QMessageBox.warning(self, "Export fehlgeschlagen", str(fehler))
+            return
+        QMessageBox.information(
+            self, "Daten exportiert",
+            f"Die Daten wurden gespeichert:\n{ziel}\n\n"
+            "Auf dem anderen PC: Schraubenschlüssel → „Daten importieren …“.\n"
+            "Bitte danach nur noch dort weiterarbeiten, bis die Daten zurückkommen.",
+        )
+
+    def daten_importieren(self):
+        quelle, _ = QFileDialog.getOpenFileName(
+            self, "Daten importieren", str(self._dokumente()), "DiKaS-Daten (*.db)"
+        )
+        if not quelle:
+            return
+        db_pfad = Path(self.db_pfad)
+        try:
+            warnungen = datenaustausch.import_warnungen(Path(quelle), db_pfad)
+            neu = datenaustausch.datenstand(Path(quelle))
+            hier = datenaustausch.datenstand(db_pfad) if db_pfad.exists() else None
+        except (OSError, ValueError, sqlite3.Error) as fehler:
+            QMessageBox.warning(self, "Import nicht möglich", str(fehler))
+            return
+        text = f"Datei: {neu.beschreibung()}\n"
+        if hier:
+            text += f"Dieser PC: {hier.beschreibung()}\n"
+        if warnungen:
+            text += "\n⚠ " + "\n⚠ ".join(warnungen) + "\n"
+        text += "\nDie Daten dieses PCs werden durch die Datei ersetzt (vorher wird gesichert). Fortfahren?"
+        antwort = QMessageBox.question(self, "Daten importieren", text)
+        if antwort != QMessageBox.Yes:
+            return
+        engine = self.Session.kw["bind"]
+        engine.dispose()  # Datei erst ersetzen, wenn keine Verbindung mehr offen ist
+        try:
+            datenaustausch.importieren(Path(quelle), db_pfad)
+        except (OSError, ValueError, sqlite3.Error) as fehler:
+            QMessageBox.warning(self, "Import fehlgeschlagen", str(fehler))
+            return
+        finally:
+            init_db(engine)  # ältere Dateien auf den aktuellen Stand bringen
+        self.aktualisieren()
+        self.statusBar().showMessage("Daten importiert.", 8000)
 
     def neues_konto(self):
         dialog = KontoDialog(self)

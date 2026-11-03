@@ -3,6 +3,47 @@
 Lokales Desktop-Programm (Windows) für Privatkonten, Kassen und das KW-Konto.
 Läuft komplett offline, die Daten liegen in einer einzigen SQLite-Datei.
 
+## Installation (für Nutzer)
+
+1. `DiKaS-Setup-<Version>.exe` per Doppelklick starten – keine Administratorrechte, kein
+   Python und kein Internet nötig. Zeigt Windows „Der Computer wurde durch Windows
+   geschützt“: **Weitere Informationen → Trotzdem ausführen** (das Programm ist nicht
+   kostenpflichtig signiert).
+2. DiKaS über Startmenü oder Desktop-Verknüpfung starten.
+3. **Updates:** neuen Installer einfach drüber installieren – die Daten bleiben erhalten.
+
+Die Daten liegen bei der installierten Version unter `%LOCALAPPDATA%\DiKaS\daten\`
+(Schraubenschlüssel → „Datenordner öffnen“) – getrennt vom Programm, nicht in OneDrive,
+und sie bleiben auch bei einer Deinstallation erhalten.
+
+## Daten an einen anderen PC weitergeben
+
+Alle Daten (Mitglieder, Buchungen, Einstellungen – aber keine Passwörter) stecken in
+**einer** Datei. Weitergabe über den Schraubenschlüssel:
+
+1. Bisheriger PC: **„Daten exportieren …“** → z. B. auf USB-Stick
+   (`DiKaS_2026-11-03_19-30.db`).
+2. Anderer PC: **„Daten importieren …“** → Datei wählen. Der eigene Stand wird vorher
+   gesichert. DiKaS **warnt**, wenn die Datei älter ist als der eigene Stand oder auf diesem
+   PC seit dem letzten Austausch weitergearbeitet wurde.
+
+**Regel:** Es arbeitet immer nur ein PC mit den Daten („Staffelstab“) – getrennt
+gebuchte Stände lassen sich nicht zusammenführen. Die Datei enthält personenbezogene
+Daten: nicht per Mail verschicken, am besten verschlüsselten USB-Stick nutzen.
+
+## Installer bauen (Entwicklung)
+
+Voraussetzungen: `.venv` eingerichtet (inkl. `pip install -e ".[dev]"`, enthält PyInstaller)
+und [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`).
+
+```powershell
+.\packaging\bauen.ps1            # Tests, DiKaS.exe (PyInstaller), Installer (Inno Setup)
+.\packaging\bauen.ps1 -OhneTests # schneller, ohne Testlauf
+```
+
+Ergebnis: `build\installer\DiKaS-Setup-<Version>.exe` (ca. 40 MB). Die Version steht in
+`dikas/__init__.py`. Der Ordner `build\` wird von Git ignoriert.
+
 ## Konzept
 
 - **Privatkonten**: eins pro Mitglied, mit **Vor- und Nachname** (Pflicht; angezeigt als
@@ -145,11 +186,12 @@ py -3.15 -m venv .venv
 .\.venv\Scripts\python.exe -m dikas
 ```
 
-Die Datenbank wird beim ersten Start unter `daten\verein.db` angelegt.
-Zum Weitergeben einfach diese Datei kopieren.
+In der Entwicklung liegt die Datenbank unter `daten\verein.db` im Projekt, bei der
+installierten Version unter `%LOCALAPPDATA%\DiKaS\daten\verein.db`. Weitergeben über
+„Daten exportieren/importieren“ (siehe oben).
 
 **Automatische Sicherung:** Bei jedem Programmstart wird der aktuelle Stand nach
-`daten\sicherung\verein_JJJJ-MM-TT_HH-MM-SS.db` gesichert – nur wenn sich seit der letzten
+`…\daten\sicherung\verein_JJJJ-MM-TT_HH-MM-SS.db` gesichert – nur wenn sich seit der letzten
 Sicherung etwas geändert hat. Es bleiben die **letzten 10 Stände** erhalten. Über
 Schraubenschlüssel → „Sicherungen …“ lassen sie sich ansehen und wiederherstellen (der
 aktuelle Stand wird vorher noch einmal gesichert). Sicherungen bleiben **nur lokal** und
@@ -176,6 +218,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_namen.py` | Vor-/Nachname: Pflicht, Aufteilen alter Namen, Sortierung, Anrede, Dialog |
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
 | `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Fehlerfälle, Dialoge |
+| `test_datenaustausch.py` | Export/Import zwischen zwei PCs, Warnungen (älter, getrennt bearbeitet), Datenordner |
 | `test_sicherung.py` | Sicherung bei Start, nur bei Änderung, letzte 10, Wiederherstellen, Git-Ignorierung |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geld.py` | Betragseingabe und -anzeige |
@@ -193,6 +236,7 @@ dikas/
   einstellungen.py  Einstellungen (Mailserver, Bankdaten, Textvorlagen), Anbieter-Vorlagen
   kontoauszug.py    Kontoauszug-Mails erzeugen, per SMTP senden, Versand protokollieren
   sicherung.py      Automatische lokale Sicherung, letzte 10 Stände, Wiederherstellen
+  datenaustausch.py Export/Import für die Weitergabe an andere PCs, Warnungen
   geld.py           Cent <-> "12,50 €"
   db/
     models.py       Tabellen (Konto, Statuswechsel, Buchung, Einstellung, Mailversand)
@@ -207,10 +251,14 @@ dikas/
     sicherungen_dialog.py    Sicherungen ansehen und wiederherstellen
     dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests
+packaging/
+  bauen.ps1         Baut DiKaS.exe und den Installer
+  dikas.iss         Inno-Setup-Skript (Installation ohne Adminrechte)
+  start_dikas.py    Startpunkt für die .exe
+  symbol_erzeugen.py, dikas.ico, dikas.png   Programmsymbol
 ```
 
 ## Geplant
 
 - Weitere Buchungsfälle (Beispiele folgen)
-- Export/Import der Daten zwischen PCs
-- Weitergabe als `.exe` per PyInstaller
+- Optional: verschlüsselte Exportdatei (Passwort)

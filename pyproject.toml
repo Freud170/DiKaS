@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9"]
+dev = ["pytest>=9", "pyinstaller>=6.22"]
 
 [project.gui-scripts]
 dikas = "dikas.app:main"
@@ -22,7 +22,7 @@ dikas = "dikas.app:main"
 include = ["dikas*"]
 
 [tool.setuptools.package-data]
-"dikas.ui" = ["*.svg"]
+"dikas.ui" = ["*.svg", "*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

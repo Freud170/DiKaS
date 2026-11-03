@@ -1,14 +1,22 @@
 """Verbindung zur SQLite-Datenbank."""
 
+import os
 import sys
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event, select
 from sqlalchemy.orm import Session
 
-from dikas.db.models import Base, Konto, KontoTyp
+from dikas.db.models import Base, Einstellung, Konto, KontoTyp
 
 DB_DATEINAME = "verein.db"
+
+# Interne Merker in der Tabelle `einstellungen` (Präfix "_": keine Benutzereinstellung)
+LETZTE_AENDERUNG = "_letzte_aenderung"  # Zeitpunkt der letzten Datenänderung
+LETZTER_AUSTAUSCH = "_letzter_austausch"  # Stand (= letzte Änderung) beim letzten Export/Import
+STAND_ID = "_stand_id"  # ändert sich bei jeder Datenänderung: gleiche ID = gleicher Inhalt
 
 
 def programm_verzeichnis() -> Path:
@@ -18,9 +26,42 @@ def programm_verzeichnis() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def daten_verzeichnis() -> Path:
+    """Wo die Vereinsdaten liegen.
+
+    Installierte Version (.exe): %LOCALAPPDATA%\\DiKaS\\daten – beschreibbar ohne Adminrechte,
+    bleibt bei Updates/Deinstallation erhalten und wird nicht von OneDrive synchronisiert.
+    Entwicklung: Ordner `daten` im Projekt.
+    """
+    if getattr(sys, "frozen", False):
+        basis = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        return basis / "DiKaS" / "daten"
+    return programm_verzeichnis() / "daten"
+
+
 def standard_db_pfad() -> Path:
-    """Die DB liegt portabel im Ordner 'daten' neben dem Programm."""
-    return programm_verzeichnis() / "daten" / DB_DATEINAME
+    return daten_verzeichnis() / DB_DATEINAME
+
+
+@event.listens_for(Session, "before_flush")
+def _aenderung_merken(session: Session, _kontext, _instanzen) -> None:
+    """Bei jeder Datenänderung den Zeitpunkt festhalten (für Warnungen beim Import)."""
+    geaendert = [
+        obj for obj in (*session.new, *session.dirty, *session.deleted)
+        if not (isinstance(obj, Einstellung) and obj.schluessel.startswith("_"))
+    ]
+    if not geaendert:
+        return
+    with session.no_autoflush:
+        for schluessel, wert in (
+            (LETZTE_AENDERUNG, datetime.now().isoformat(timespec="seconds")),
+            (STAND_ID, uuid.uuid4().hex),
+        ):
+            eintrag = session.get(Einstellung, schluessel)
+            if eintrag is None:
+                session.add(Einstellung(schluessel=schluessel, wert=wert))
+            else:
+                eintrag.wert = wert
 
 
 def erstelle_engine(pfad: Path | str | None = None) -> Engine:

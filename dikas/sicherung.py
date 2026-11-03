@@ -55,7 +55,7 @@ def _pruefsumme(pfad: Path) -> str:
     return hashlib.sha256(pfad.read_bytes()).hexdigest()
 
 
-def _kopiere(quelle: Path, ziel: Path) -> None:
+def kopiere_datenbank(quelle: Path, ziel: Path) -> None:
     """Konsistente Kopie über die SQLite-Backup-Funktion (auch wenn die DB gerade offen ist)."""
     with sqlite3.connect(quelle) as von, sqlite3.connect(ziel) as nach:
         von.backup(nach)
@@ -79,7 +79,7 @@ def sichern(db_pfad: Path, jetzt: datetime | None = None, behalten: int = BEHALT
         nummer += 1
 
     vorherige = sicherungen(db_pfad)
-    _kopiere(db_pfad, ziel)
+    kopiere_datenbank(db_pfad, ziel)
     if vorherige and _pruefsumme(vorherige[0].pfad) == _pruefsumme(ziel):
         ziel.unlink()  # unverändert seit der letzten Sicherung
         return None
@@ -107,7 +107,7 @@ def wiederherstellen(sicherung: Sicherung, db_pfad: Path, jetzt: datetime | None
     pruefen(sicherung.pfad)
     # Nicht aufräumen lassen: die gewählte Sicherung könnte sonst als älteste gelöscht werden
     vorher = sichern(db_pfad, jetzt, behalten=BEHALTEN + 1)
-    _kopiere(sicherung.pfad, Path(db_pfad))
+    kopiere_datenbank(sicherung.pfad, Path(db_pfad))
     return vorher
 
 

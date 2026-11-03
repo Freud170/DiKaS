@@ -26,6 +26,7 @@ NEGATIV = "#c0392b"
 INAKTIV = "#9aa3ae"
 
 HAKEN = (Path(__file__).parent / "haken.svg").as_posix()
+PROGRAMMSYMBOL = Path(__file__).parent / "symbol.png"
 
 STYLESHEET = f"""
 QWidget {{
@@ -306,6 +307,8 @@ def anwenden(app: QApplication) -> None:
     QLocale.setDefault(QLocale(QLocale.German, QLocale.Germany))
 
     app.setStyle("Fusion")
+    if PROGRAMMSYMBOL.exists():
+        app.setWindowIcon(QIcon(str(PROGRAMMSYMBOL)))
     app.setFont(QFont("Segoe UI", 10))
     palette = app.palette()
     palette.setColor(QPalette.Window, QColor(HINTERGRUND))
