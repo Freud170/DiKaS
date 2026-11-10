@@ -203,3 +203,41 @@ def test_auswertung_kennzahlen_ohne_interne_transfers(app, engine, monkeypatch):
     gruppen = {titel: mit_summe for titel, _, mit_summe in gruppiere(d.bewegungen)}
     assert gruppen["Geldorte"] is True  # Summenzeile bei mehreren Geldorten
     d.close()
+
+
+# --- Korrektur (Buchung korrigieren) ----------------------------------------
+
+def test_korrektur_nur_text_behaelt_geldort(verein):
+    """Ohne Geldort-Angabe (Dialog bei einem aktiven Geldort) bleibt die Buchung, wo sie ist."""
+    tom, bei_max = verein.mitglied("Tom"), verein.geldort("Bei Max")
+    b = verein.einzahlung(tom, "50", "bar", D(2026, 3, 1), ort=bei_max)
+    ergebnis = bh.buchung_korrigieren(verein.s, b.id, Art.EINZAHLUNG, tom.id, ct("50"), "bar an Max", D(2026, 3, 1))
+    assert ergebnis.id == b.id and ergebnis.text == "bar an Max"
+    assert verein.saldo(bei_max) == ct("50")
+
+
+def test_korrektur_betrag_behaelt_geldort(verein):
+    tom, bei_max = verein.mitglied("Tom"), verein.geldort("Bei Max")
+    b = verein.einzahlung(tom, "50", "bar", D(2026, 3, 1), ort=bei_max)
+    bh.buchung_korrigieren(verein.s, b.id, Art.EINZAHLUNG, tom.id, ct("40"), "bar", D(2026, 3, 1))
+    assert verein.saldo(bei_max) == ct("40") and verein.saldo(verein.kw) == 0
+    verein.pruefe_abstimmung()
+
+
+def test_korrektur_anderer_geldort(verein):
+    tom, bei_max = verein.mitglied("Tom"), verein.geldort("Bei Max")
+    b = verein.einzahlung(tom, "50", "bar", D(2026, 3, 1))
+    bh.buchung_korrigieren(
+        verein.s, b.id, Art.EINZAHLUNG, tom.id, ct("50"), "bar", D(2026, 3, 1), gegenkonto_id=bei_max.id
+    )
+    assert verein.saldo(bei_max) == ct("50") and verein.saldo(verein.kw) == 0
+    verein.pruefe_abstimmung()
+
+
+def test_korrektur_von_umbuchung_zu_einzahlung_nimmt_standard(verein):
+    tom, kasse = verein.mitglied("Tom"), verein.kasse("K")
+    verein.geldort("Bei Max")
+    b = verein.umbuchung(kasse, tom, "10", "x", D(2026, 3, 1))
+    bh.buchung_korrigieren(verein.s, b.id, Art.EINZAHLUNG, tom.id, ct("10"), "x", D(2026, 3, 1))
+    assert verein.saldo(verein.kw) == ct("10")
+    verein.pruefe_abstimmung()

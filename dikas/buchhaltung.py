@@ -539,6 +539,12 @@ def buchung_korrigieren(
     if original.ist_storniert:
         raise BuchhaltungsFehler("Diese Buchung wurde bereits storniert und kann nicht mehr korrigiert werden.")
     vorher = eingabe_aus_buchung(original)
+    regel = REGELN.get(art)
+    if gegenkonto_id is None and regel is not None and regel.standard_geldort:
+        # Ohne Angabe (z. B. nur ein aktiver Geldort im Dialog): bisherigen Geldort beibehalten,
+        # sonst würde schon eine reine Textkorrektur storniert und neu gebucht
+        if REGELN[original.art].standard_geldort:
+            gegenkonto_id = vorher["gegenkonto_id"]
     neu = {"art": art, "konto_id": konto_id, "gegenkonto_id": gegenkonto_id,
            "betrag_cent": betrag_cent, "datum": datum}
     if all(vorher[k] == v for k, v in neu.items()):

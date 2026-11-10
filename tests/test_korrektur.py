@@ -116,7 +116,8 @@ class TestKorrigieren:
             "text": "Beitrag", "datum": D(2026, 1, 1), "beleg": "",
         }
         e = verein.einzahlung(tom, "5")
-        assert bh.eingabe_aus_buchung(e)["konto_id"] == tom.id and bh.eingabe_aus_buchung(e)["gegenkonto_id"] is None
+        # Seit es mehrere Geldorte gibt, gehört der Geldort zur Eingabe
+        assert bh.eingabe_aus_buchung(e)["konto_id"] == tom.id and bh.eingabe_aus_buchung(e)["gegenkonto_id"] == verein.kw.id
 
 
 class TestImJahrEingetreten:
