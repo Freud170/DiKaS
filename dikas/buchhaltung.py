@@ -25,29 +25,41 @@ class BuchhaltungsFehler(ValueError):
 @dataclass(frozen=True)
 class ArtRegel:
     konto_typen: tuple[KontoTyp, ...]
-    # None = Gegenkonto ist automatisch das KW-Konto
-    gegen_typen: tuple[KontoTyp, ...] | None
+    gegen_typen: tuple[KontoTyp, ...]
     konto_im_soll: bool
     konto_beschriftung: str
-    gegen_beschriftung: str = ""
+    gegen_beschriftung: str
+    # Ohne Gegenkonto wird der Standard-Geldort genommen (siehe `kw_konto`)
+    standard_geldort: bool = False
 
+
+_GELDORT = (KontoTyp.KW,)
 
 REGELN: dict[Buchungsart, ArtRegel] = {
-    Buchungsart.EINZAHLUNG: ArtRegel((KontoTyp.PRIVAT,), None, False, "Mitglied"),
-    Buchungsart.AUSZAHLUNG: ArtRegel((KontoTyp.PRIVAT,), None, True, "Mitglied"),
-    Buchungsart.KASSE_EINNAHME: ArtRegel((KontoTyp.KASSE,), None, False, "Kasse"),
-    Buchungsart.KASSE_AUSGABE: ArtRegel((KontoTyp.KASSE,), None, True, "Kasse"),
+    Buchungsart.EINZAHLUNG: ArtRegel((KontoTyp.PRIVAT,), _GELDORT, False, "Mitglied", "Geldort", True),
+    Buchungsart.AUSZAHLUNG: ArtRegel((KontoTyp.PRIVAT,), _GELDORT, True, "Mitglied", "Geldort", True),
+    Buchungsart.KASSE_EINNAHME: ArtRegel((KontoTyp.KASSE,), _GELDORT, False, "Kasse", "Geldort", True),
+    Buchungsart.KASSE_AUSGABE: ArtRegel((KontoTyp.KASSE,), _GELDORT, True, "Kasse", "Geldort", True),
     Buchungsart.UMBUCHUNG: ArtRegel(
         (KontoTyp.PRIVAT, KontoTyp.KASSE), (KontoTyp.PRIVAT, KontoTyp.KASSE), True, "Von", "Nach"
     ),
     Buchungsart.BEITRAG: ArtRegel((KontoTyp.PRIVAT,), (KontoTyp.KASSE,), True, "Mitglied", "Kasse"),
+    # Von-Geldort im Haben (sinkt), Nach-Geldort im Soll (steigt)
+    Buchungsart.GELDTRANSFER: ArtRegel(_GELDORT, _GELDORT, False, "Von", "Nach"),
 }
 
 
 # --- Konten ---------------------------------------------------------------
 
 def kw_konto(session: Session) -> Konto:
-    return session.scalars(select(Konto).where(Konto.typ == KontoTyp.KW)).one()
+    """Standard-Geldort: der älteste aktive (bei neuen Datenbanken das automatisch angelegte „KW“)."""
+    return session.scalars(
+        select(Konto).where(Konto.typ == KontoTyp.KW, Konto.aktiv).order_by(Konto.id).limit(1)
+    ).one()
+
+
+def geldorte(session: Session) -> list[Konto]:
+    return list(session.scalars(select(Konto).where(Konto.typ == KontoTyp.KW).order_by(Konto.id)))
 
 
 def konten(session: Session, nur_aktive: bool = False) -> list[Konto]:
@@ -158,8 +170,6 @@ def konto_anlegen(
     nachname: str | None = None,
 ) -> Konto:
     """Legt ein Konto an. Bei Privatkonten Vor- und Nachname angeben (sonst wird `name` aufgeteilt)."""
-    if typ == KontoTyp.KW:
-        raise BuchhaltungsFehler("Es gibt genau ein KW-Konto, es wird automatisch angelegt.")
     name, vorname, nachname = _namensteile(typ, name, vorname, nachname)
     name = _pruefe_name(session, name, typ)
     _pruefe_status(typ, status)
@@ -200,8 +210,8 @@ def konto_bearbeiten(
     konto = _konto(session, konto_id)
     if konto.geloescht:
         raise BuchhaltungsFehler(f"Konto „{konto.name}“ ist gelöscht. Bitte zuerst wiederherstellen.")
-    if konto.typ == KontoTyp.KW and not aktiv:
-        raise BuchhaltungsFehler("Das KW-Konto kann nicht deaktiviert werden.")
+    if konto.typ == KontoTyp.KW and konto.aktiv and not aktiv:
+        _pruefe_geldort_deaktivieren(session, konto)
     if vorname is None and nachname is None and name.strip() == konto.name and konto.nachname:
         vorname, nachname = konto.vorname, konto.nachname
     name, konto.vorname, konto.nachname = _namensteile(konto.typ, name, vorname, nachname)
@@ -225,6 +235,18 @@ def konto_bearbeiten(
         konto.eintrittsdatum = eintrittsdatum
     session.flush()
     return konto
+
+
+def _pruefe_geldort_deaktivieren(session: Session, konto: Konto) -> None:
+    """Ein Geldort lässt sich erst stilllegen, wenn das Geld woanders ist – und einer muss bleiben."""
+    stand = saldo(session, konto.id)
+    if stand != 0:
+        raise BuchhaltungsFehler(
+            f"Geldort „{konto.name}“ kann nur bei Saldo 0 deaktiviert werden "
+            f"(aktuell {cent_zu_text(stand)}). Bitte das Geld vorher per Geldtransfer umbuchen."
+        )
+    if not any(g.aktiv and g.id != konto.id for g in geldorte(session)):
+        raise BuchhaltungsFehler("Mindestens ein Geldort muss aktiv bleiben.")
 
 
 # --- Statusverlauf --------------------------------------------------------
@@ -362,8 +384,8 @@ def buchen(
 ) -> Buchung:
     """Bucht nach den Regeln der Buchungsart.
 
-    `gegenkonto_id` wird nur bei Umbuchung und Beitrag gebraucht,
-    sonst ist das Gegenkonto automatisch das KW-Konto.
+    `gegenkonto_id` ist bei Einzahlung, Auszahlung und Kassen-Einnahme/-Ausgabe der Geldort;
+    ohne Angabe wird der Standard-Geldort genommen. Bei den übrigen Arten ist es Pflicht.
     """
     regel = REGELN.get(art)
     if regel is None:
@@ -375,11 +397,11 @@ def buchen(
         raise BuchhaltungsFehler("Bitte einen Buchungstext angeben.")
 
     konto = _aktives_konto(session, konto_id, regel.konto_typen, regel.konto_beschriftung)
-    if regel.gegen_typen is None:
+    if gegenkonto_id is None and regel.standard_geldort:
         gegen = kw_konto(session)
+    elif gegenkonto_id is None:
+        raise BuchhaltungsFehler(f"Bitte „{regel.gegen_beschriftung}“ angeben.")
     else:
-        if gegenkonto_id is None:
-            raise BuchhaltungsFehler(f"Bitte „{regel.gegen_beschriftung}“ angeben.")
         gegen = _aktives_konto(session, gegenkonto_id, regel.gegen_typen, regel.gegen_beschriftung)
     if konto.id == gegen.id:
         raise BuchhaltungsFehler("Die beiden Konten müssen verschieden sein.")
@@ -767,7 +789,7 @@ def kontobewegungen(session: Session, von: date, bis: date) -> list[KontoBewegun
 
     ergebnis = []
     for konto in konten(session):
-        # Aktivkonto (KW) steigt im Soll, alle anderen im Haben
+        # Aktivkonten (Geldorte) steigen im Soll, alle anderen im Haben
         if konto.typ.ist_aktivkonto:
             plus_vor, minus_vor, plus_im, minus_im = soll_vor, haben_vor, soll_im, haben_im
         else:
@@ -805,7 +827,7 @@ def summen_nach_art(session: Session, von: date, bis: date) -> list[ArtSumme]:
 
 @dataclass(frozen=True)
 class Abstimmung:
-    kw_cent: int
+    kw_cent: int  # Summe aller Geldorte
     verteilt_cent: int  # Summe aller Privatkonten und Kassen
 
     @property
@@ -814,7 +836,10 @@ class Abstimmung:
 
 
 def abstimmung(session: Session) -> Abstimmung:
-    """Kontrolle: KW-Konto muss der Summe aller Privatkonten und Kassen entsprechen."""
+    """Kontrolle: Summe aller Geldorte (KW) muss der Summe aller Privatkonten und Kassen entsprechen."""
     werte = salden(session)
-    kw_id = kw_konto(session).id
-    return Abstimmung(werte[kw_id], sum(v for k, v in werte.items() if k != kw_id))
+    kw_ids = {g.id for g in geldorte(session)}
+    return Abstimmung(
+        sum(v for k, v in werte.items() if k in kw_ids),
+        sum(v for k, v in werte.items() if k not in kw_ids),
+    )

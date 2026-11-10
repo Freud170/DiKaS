@@ -32,14 +32,14 @@ from dikas.ui import stil
 from dikas.ui.bausteine import GRAU, Kennzahl, betrag_zelle, fett_machen, zelle
 
 GRUPPEN = [
-    (KontoTyp.KW, "KW-Konto"),
+    (KontoTyp.KW, "Geldorte"),
     (KontoTyp.KASSE, "Kassen"),
     (KontoTyp.PRIVAT, "Privatkonten"),
 ]
 
 KONTOART_FILTER = {
     "Alle Konten": lambda k: True,
-    "KW-Konto": lambda k: k.typ == KontoTyp.KW,
+    "Geldorte": lambda k: k.typ == KontoTyp.KW,
     "Kassen": lambda k: k.typ == KontoTyp.KASSE,
     "Privatkonten": lambda k: k.typ == KontoTyp.PRIVAT,
     **{s.mehrzahl: (lambda k, s=s: k.status == s) for s in MitgliedStatus},
@@ -72,7 +72,7 @@ def _konto_name(konto) -> str:
 def gruppiere(bewegungen: list[KontoBewegung]) -> list[tuple[str, list[KontoBewegung], bool]]:
     """Bewegungen nach Kontoart gruppiert und sortiert; leere Gruppen fallen weg.
 
-    Das dritte Element sagt, ob eine Summenzeile sinnvoll ist (nicht beim einzelnen KW-Konto).
+    Das dritte Element sagt, ob eine Summenzeile sinnvoll ist (nicht bei nur einem Geldort).
     """
     ergebnis = []
     for typ, titel in GRUPPEN:
@@ -80,7 +80,7 @@ def gruppiere(bewegungen: list[KontoBewegung]) -> list[tuple[str, list[KontoBewe
             (b for b in bewegungen if b.konto.typ == typ), key=lambda b: sortierschluessel(b.konto)
         )
         if zeilen:
-            ergebnis.append((titel, zeilen, typ != KontoTyp.KW))
+            ergebnis.append((titel, zeilen, typ != KontoTyp.KW or len(zeilen) > 1))
     return ergebnis
 
 
@@ -341,8 +341,15 @@ class AuswertungDialog(QDialog):
         return [b for b in self.buchungen if konto_id in (b.soll_konto_id, b.haben_konto_id)]
 
     def _zeige_kennzahlen(self):
-        kw = next((b for b in self.bewegungen if b.konto.typ == KontoTyp.KW), None)
-        werte = (kw.anfang, kw.zugang, kw.abgang, kw.ende) if kw else (0, 0, 0, 0)
+        kw = [b for b in self.bewegungen if b.konto.typ == KontoTyp.KW]
+        # Geld, das nur zwischen Geldorten wandert (Geldtransfer und dessen Storno),
+        # ist weder Einnahme noch Ausgabe
+        intern = sum(
+            b.betrag_cent for b in self.buchungen
+            if b.soll_konto.typ == KontoTyp.KW and b.haben_konto.typ == KontoTyp.KW
+        )
+        anfang, zugang, abgang, _, ende = summe(kw)
+        werte = (anfang, zugang - intern, abgang - intern, ende)
         for karte, wert in zip(
             (self.karte_anfang, self.karte_einnahmen, self.karte_ausgaben, self.karte_ende), werte
         ):

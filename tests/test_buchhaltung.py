@@ -33,9 +33,10 @@ def test_kw_konto_wird_automatisch_angelegt(session):
     assert bh.kw_konto(session).typ == KontoTyp.KW
 
 
-def test_kein_zweites_kw_konto(session):
-    with pytest.raises(bh.BuchhaltungsFehler):
-        bh.konto_anlegen(session, "KW 2", KontoTyp.KW)
+def test_weitere_geldorte_moeglich(session):
+    ort = bh.konto_anlegen(session, "Bei Max", KontoTyp.KW)
+    assert ort.typ == KontoTyp.KW
+    assert bh.kw_konto(session).name == "KW"  # Standard bleibt der erste
 
 
 def test_doppelter_kontoname_verboten(session):

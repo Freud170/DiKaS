@@ -81,23 +81,30 @@ class Verein:
     def kasse(self, name: str) -> Konto:
         return bh.konto_anlegen(self.s, name, KontoTyp.KASSE)
 
+    def geldort(self, name: str) -> Konto:
+        return bh.konto_anlegen(self.s, name, KontoTyp.KW)
+
     def _buche(self, art, konto, betrag, text, datum, gegen=None):
         return bh.buchen(
             self.s, art, konto.id, ct(betrag), text or art.anzeige, datum,
             gegenkonto_id=gegen.id if gegen else None,
         )
 
-    def einzahlung(self, m, betrag, text="", datum: date | None = None):
-        return self._buche(Art.EINZAHLUNG, m, betrag, text, datum)
+    # `ort`: Geldort, ohne Angabe der Standard-Geldort
+    def einzahlung(self, m, betrag, text="", datum: date | None = None, ort=None):
+        return self._buche(Art.EINZAHLUNG, m, betrag, text, datum, gegen=ort)
 
-    def auszahlung(self, m, betrag, text="", datum: date | None = None):
-        return self._buche(Art.AUSZAHLUNG, m, betrag, text, datum)
+    def auszahlung(self, m, betrag, text="", datum: date | None = None, ort=None):
+        return self._buche(Art.AUSZAHLUNG, m, betrag, text, datum, gegen=ort)
 
-    def einnahme(self, kasse, betrag, text="", datum: date | None = None):
-        return self._buche(Art.KASSE_EINNAHME, kasse, betrag, text, datum)
+    def einnahme(self, kasse, betrag, text="", datum: date | None = None, ort=None):
+        return self._buche(Art.KASSE_EINNAHME, kasse, betrag, text, datum, gegen=ort)
 
-    def ausgabe(self, kasse, betrag, text="", datum: date | None = None):
-        return self._buche(Art.KASSE_AUSGABE, kasse, betrag, text, datum)
+    def ausgabe(self, kasse, betrag, text="", datum: date | None = None, ort=None):
+        return self._buche(Art.KASSE_AUSGABE, kasse, betrag, text, datum, gegen=ort)
+
+    def geldtransfer(self, von, nach, betrag, text="", datum: date | None = None):
+        return self._buche(Art.GELDTRANSFER, von, betrag, text, datum, gegen=nach)
 
     def umbuchung(self, von, nach, betrag, text="", datum: date | None = None):
         return self._buche(Art.UMBUCHUNG, von, betrag, text, datum, gegen=nach)
@@ -116,7 +123,7 @@ class Verein:
         return bh.saldo(self.s, konto.id)
 
     def pruefe_abstimmung(self):
-        """KW muss immer der Summe aller Privatkonten und Kassen entsprechen."""
+        """KW (alle Geldorte) muss immer der Summe aller Privatkonten und Kassen entsprechen."""
         a = bh.abstimmung(self.s)
         assert a.stimmt, f"KW {a.kw_cent} != verteilt {a.verteilt_cent}"
 

@@ -1,10 +1,11 @@
 """Datenmodell: doppelte Buchführung mit Soll und Haben.
 
 Kontoarten:
-- KW-Konto (Aktivkonto): das tatsächlich vorhandene Geld. Soll = Plus, Haben = Minus.
+- Geldorte (KW, Aktivkonten): wo das tatsächlich vorhandene Geld liegt (z. B. Bargeld,
+  Bankkonto, vorübergehend bei einer Person). Soll = Plus, Haben = Minus.
 - Privatkonten und Kassen (Passivkonten): wem das Geld „gehört“. Haben = Plus, Soll = Minus.
 
-Dadurch gilt immer: Saldo KW = Summe aller Privatkonten und Kassen.
+Dadurch gilt immer: Summe aller Geldorte (KW) = Summe aller Privatkonten und Kassen.
 Kontostände werden nie gespeichert, sondern immer aus den Buchungen berechnet.
 Beträge werden in Cent (int) gespeichert, um Rundungsfehler zu vermeiden.
 """
@@ -24,15 +25,15 @@ class Base(DeclarativeBase):
 class KontoTyp(enum.StrEnum):
     PRIVAT = "PRIVAT"  # Privatkonto eines Mitglieds
     KASSE = "KASSE"  # separat geführte Kasse
-    KW = "KW"  # tatsächlicher liquider Bestand (genau eins)
+    KW = "KW"  # Geldort: Teil des tatsächlichen liquiden Bestands (mindestens einer)
 
     @property
     def anzeige(self) -> str:
-        return {"PRIVAT": "Privatkonto", "KASSE": "Kasse", "KW": "KW-Konto"}[self.value]
+        return {"PRIVAT": "Privatkonto", "KASSE": "Kasse", "KW": "Geldort"}[self.value]
 
     @property
     def reihenfolge(self) -> int:
-        """Sortierung in Listen: KW oben, dann Kassen, dann Mitglieder."""
+        """Sortierung in Listen: Geldorte oben, dann Kassen, dann Mitglieder."""
         return {"KW": 0, "KASSE": 1, "PRIVAT": 2}[self.value]
 
     @property
@@ -75,6 +76,7 @@ class Buchungsart(enum.StrEnum):
     KASSE_AUSGABE = "KASSE_AUSGABE"  # Kasse gibt Geld aus (KW -, Kasse -)
     UMBUCHUNG = "UMBUCHUNG"  # zwischen Privatkonten/Kassen, KW unverändert
     BEITRAG = "BEITRAG"  # Mitgliedsbeitrag: Privat -, Kasse +
+    GELDTRANSFER = "GELDTRANSFER"  # Geld wechselt den Ort: Geldort -, Geldort +, KW gesamt gleich
     STORNO = "STORNO"  # Gegenbuchung zu einer anderen Buchung
 
     @property
@@ -86,6 +88,7 @@ class Buchungsart(enum.StrEnum):
             "KASSE_AUSGABE": "Kassen-Ausgabe",
             "UMBUCHUNG": "Umbuchung",
             "BEITRAG": "Beitrag",
+            "GELDTRANSFER": "Geldtransfer",
             "STORNO": "Storno",
         }[self.value]
 

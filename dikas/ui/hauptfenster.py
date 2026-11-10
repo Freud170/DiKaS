@@ -55,6 +55,7 @@ KONTEN_FILTER = {
         for status in MitgliedStatus
     },
     "Kassen": lambda k: not k.geloescht and k.typ == KontoTyp.KASSE,
+    "Geldorte": lambda k: not k.geloescht and k.typ == KontoTyp.KW,
     "Gelöschte": lambda k: k.geloescht,
 }
 

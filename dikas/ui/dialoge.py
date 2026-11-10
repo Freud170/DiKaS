@@ -153,7 +153,7 @@ class KontoDialog(QDialog):
             self.typ.addItem(konto.typ.anzeige, konto.typ)
             self.typ.setEnabled(False)
         else:
-            for typ in (KontoTyp.PRIVAT, KontoTyp.KASSE):
+            for typ in (KontoTyp.PRIVAT, KontoTyp.KASSE, KontoTyp.KW):
                 self.typ.addItem(typ.anzeige, typ)
         self.status = _status_auswahl()
         if konto and konto.status:
@@ -321,25 +321,30 @@ class BuchungDialog(QDialog):
             if konto.typ in typen:
                 zusatz = konto.status.anzeige if konto.status else konto.typ.anzeige
                 box.addItem(f"{konto.name} ({zusatz})", konto.id)
+        # Vorauswahl bei Geldorten: der Standard-Geldort (ältester), wie in `buchhaltung.kw_konto`
+        geldorte = [k.id for k in self.konten if k.typ == KontoTyp.KW and k.typ in typen]
+        if geldorte:
+            box.setCurrentIndex(box.findData(min(geldorte)))
 
     def _art_geaendert(self):
         art: Buchungsart = self.art.currentData()
         regel = REGELN[art]
         self._fuelle(self.konto, regel.konto_typen)
         self.form.labelForField(self.konto).setText(f"{regel.konto_beschriftung}:")
-        hat_gegen = regel.gegen_typen is not None
-        self.form.setRowVisible(self.gegen, hat_gegen)
-        if hat_gegen:
-            self._fuelle(self.gegen, regel.gegen_typen)
-            self.form.labelForField(self.gegen).setText(f"{regel.gegen_beschriftung}:")
+        self._fuelle(self.gegen, regel.gegen_typen)
+        self.form.labelForField(self.gegen).setText(f"{regel.gegen_beschriftung}:")
+        # Gibt es nur einen Geldort, muss niemand etwas auswählen
+        nur_ein_geldort = regel.standard_geldort and self.gegen.count() <= 1
+        self.form.setRowVisible(self.gegen, not nur_ein_geldort)
         self.hinweis.setText(
             {
-                Buchungsart.EINZAHLUNG: "Mitglied zahlt Geld ein: Privatkonto + / KW +",
-                Buchungsart.AUSZAHLUNG: "Mitglied bekommt Geld: Privatkonto − / KW −",
-                Buchungsart.KASSE_EINNAHME: "Kasse nimmt Geld ein: Kasse + / KW +",
-                Buchungsart.KASSE_AUSGABE: "Kasse gibt Geld aus: Kasse − / KW −",
+                Buchungsart.EINZAHLUNG: "Mitglied zahlt Geld ein: Privatkonto + / Geldort +",
+                Buchungsart.AUSZAHLUNG: "Mitglied bekommt Geld: Privatkonto − / Geldort −",
+                Buchungsart.KASSE_EINNAHME: "Kasse nimmt Geld ein: Kasse + / Geldort +",
+                Buchungsart.KASSE_AUSGABE: "Kasse gibt Geld aus: Kasse − / Geldort −",
                 Buchungsart.UMBUCHUNG: "Von − / Nach +, KW bleibt gleich",
                 Buchungsart.BEITRAG: "Privatkonto − / Kasse +, KW bleibt gleich",
+                Buchungsart.GELDTRANSFER: "Geld wechselt den Ort: Von − / Nach +, KW gesamt bleibt gleich",
             }[art]
         )
 
