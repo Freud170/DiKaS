@@ -25,6 +25,10 @@ sicherung/
 *.7z
 *.log
 
+# Vereinslogo – jeder Verein baut sein eigenes ein (siehe README)
+dikas/ui/logo.png
+dikas/ui/logo.ico
+
 # Umgebungen / Geheimnisse
 .venv/
 venv/

@@ -59,25 +59,35 @@ Ergebnis: `build\installer\DiKaS-Setup-<Version>.exe` (ca. 40 MB). Die Version s
   nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,
   Bierspitz und E-Mail.
 - **Kassen**: beliebig viele, getrennt geführt
-- **KW-Konto**: genau eins, bildet den tatsächlichen liquiden Bestand ab (wird automatisch angelegt)
+- **Geldorte (KW)**: wo das tatsächlich vorhandene Geld liegt, z. B. „Bargeld“, „Bankkonto“
+  oder vorübergehend „Bei Max Mustermann“. Der erste („KW“) wird automatisch angelegt, weitere
+  über „Neues Konto“ → Typ *Geldort*. **KW gesamt** = Summe aller Geldorte.
 
 ### Doppelte Buchführung (Soll/Haben)
 
-- Das **KW-Konto** ist das Geld, das tatsächlich da ist (Aktivkonto: Soll = Plus).
+- Die **Geldorte** zeigen, wo das Geld liegt, das tatsächlich da ist (Aktivkonten: Soll = Plus).
 - **Privatkonten und Kassen** zeigen, wem dieses Geld zusteht (Passivkonten: Haben = Plus).
-- Kontrollregel (unten rechts in der Statusleiste): **KW = Summe aller Privatkonten + Kassen**.
+- Kontrollregel (unten rechts in der Statusleiste): **KW (alle Geldorte) = Summe aller Privatkonten + Kassen**.
 
 Gebucht wird über **Buchungsarten**, Soll und Haben setzt das Programm selbst:
 
 | Buchungsart | Wirkung |
 |---|---|
-| Einzahlung | Mitglied zahlt ein: Privatkonto +, KW + |
-| Auszahlung | Mitglied bekommt Geld: Privatkonto −, KW − |
-| Kassen-Einnahme | Kasse +, KW + |
-| Kassen-Ausgabe | Kasse −, KW − |
+| Einzahlung | Mitglied zahlt ein: Privatkonto +, Geldort + |
+| Auszahlung | Mitglied bekommt Geld: Privatkonto −, Geldort − |
+| Kassen-Einnahme | Kasse +, Geldort + |
+| Kassen-Ausgabe | Kasse −, Geldort − |
 | Umbuchung | zwischen Privatkonten/Kassen: Von −, Nach +, KW unverändert |
 | Beitrag | Privatkonto −, Kasse +, KW unverändert |
+| Geldtransfer | zwischen Geldorten (z. B. Bargeld zur Bank): Von −, Nach +, KW gesamt unverändert |
 | Storno | Gegenbuchung zu einer bestehenden Buchung |
+
+Gibt es mehrere Geldorte, fragt die Buchung zusätzlich nach dem **Geldort**. Vorausgewählt ist
+der Standard-Geldort, also der älteste aktive. Bei nur einem Geldort bleibt das Feld ausgeblendet.
+
+**Beispiel:** Solange das Vereinskonto fehlt, verwahrt Max 300 € → Geldort „Bei Max“ anlegen
+und *Geldtransfer* KW → Bei Max über 300 €. Wenn das Bankkonto da ist: Geldort „Bankkonto“
+anlegen, *Geldtransfer* Bei Max → Bankkonto, danach „Bei Max“ deaktivieren.
 
 Ein Privatkonto im Minus heißt: Das Mitglied schuldet dem Verein noch etwas.
 
@@ -121,7 +131,8 @@ Button „Auswertung“ (Strg+P): Zeitraum wählen (Schnellauswahl Dieses/Letzte
 Dieser/Letzter Monat oder frei), Start- und Enddatum zählen mit.
 
 - **Kontobewegungen**: je Konto Anfangsbestand, Zugänge, Abgänge, Veränderung und
-  Endbestand, mit Summen für Kassen und Privatkonten; filterbar nach Kontoart/Status
+  Endbestand, mit Summen für Geldorte (ab zwei), Kassen und Privatkonten; filterbar nach
+  Kontoart/Status. Die Kennzahlen „Einnahmen/Ausgaben (KW)“ zählen Geldtransfers nicht mit.
 - **Nach Buchungsart**: Anzahl und Summe je Buchungsart
 - **Buchungen**: alle Buchungen im Zeitraum, filterbar nach Konto
 - **Als PDF speichern**: Bericht mit allen drei Teilen (A4)
@@ -171,6 +182,7 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
   übernommen; ändern sich Betrag, Konten, Art oder Datum, wird die alte Buchung (mit ihrem
   Datum) storniert und eine neue angelegt. Ein Beitragsjahr bleibt dabei erhalten.
 - **Deaktivieren** (Konto bearbeiten): z. B. ausgetreten, aber noch sichtbar, keine neuen Buchungen.
+  Ein Geldort lässt sich nur bei Saldo 0 deaktivieren, und mindestens einer bleibt aktiv.
 - **Löschen** geht nur bei Privatkonten mit **Saldo 0**:
   - ohne Buchungen → Konto wird wirklich entfernt
   - mit Buchungen → Konto wird als gelöscht markiert und ausgeblendet; die Buchungen
@@ -198,6 +210,39 @@ py -3.15 -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe -m dikas
 ```
+
+Oder per Desktop-Verknüpfung (startet ohne Konsolenfenster):
+
+```powershell
+$verknuepfung = (New-Object -ComObject WScript.Shell).CreateShortcut("$([Environment]::GetFolderPath('Desktop'))\DiKaS.lnk")
+$verknuepfung.TargetPath = "$PWD\.venv\Scripts\dikas.exe"
+$verknuepfung.WorkingDirectory = "$PWD"
+$verknuepfung.IconLocation = "$PWD\dikas\ui\logo.ico,0"   # nur mit eigenem Logo, siehe unten
+$verknuepfung.Save()
+```
+
+### Eigenes Vereinslogo
+
+Das Logo ist nicht im Repo (`.gitignore`), jeder Verein baut sein eigenes ein. Ohne Logo
+startet DiKaS ganz normal, nur mit Standardsymbol.
+
+```powershell
+.\.venv\Scripts\python.exe -m dikas.logo C:\Pfad\zum\wappen.png --rund
+```
+
+- Erzeugt `dikas\ui\logo.png` (Fenster und Taskleiste) und `dikas\ui\logo.ico`
+  (Desktop-Verknüpfung, mehrere Größen von 16 bis 256 px).
+- Das Bild wird auf ein **mittiges Quadrat** zugeschnitten. Am besten also ein quadratisches
+  Bild verwenden, auf dem das Wappen den Platz ausfüllt (PNG mit transparentem Hintergrund
+  ist ideal; ab 256 × 256 px).
+- `--rund` schneidet kreisförmig aus und macht die Ecken transparent, z. B. für Wappen auf
+  rundem Hintergrund. Ohne `--rund` bleibt das Quadrat vollständig erhalten.
+- Danach DiKaS neu starten. Für die Desktop-Verknüpfung: Rechtsklick → Eigenschaften →
+  „Anderes Symbol …“ → `dikas\ui\logo.ico` wählen (oder die Verknüpfung oben neu anlegen).
+  Windows speichert Symbole zwischen; zeigt die Verknüpfung noch das alte Bild, hilft eine
+  Ab- und Anmeldung.
+- `packaging\bauen.ps1` nimmt das eigene Logo automatisch für `DiKaS.exe` und das
+  Programmfenster, sonst das Standardsymbol aus `packaging\dikas.ico`.
 
 In der Entwicklung liegt die Datenbank unter `daten\verein.db` im Projekt, bei der
 installierten Version unter `%LOCALAPPDATA%\DiKaS\daten\verein.db`. Weitergeben über
@@ -235,7 +280,9 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_datenaustausch.py` | Export/Import zwischen zwei PCs, Warnungen (älter, getrennt bearbeitet), Datenordner |
 | `test_sicherung.py` | Sicherung bei Start, nur bei Änderung, letzte 10, Wiederherstellen, Git-Ignorierung |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
+| `test_geldorte.py` | Mehrere Geldorte, Geldtransfer, Deaktivieren, Buchungsdialog, Auswertung |
 | `test_geld.py` | Betragseingabe und -anzeige |
+| `test_logo.py` | Vereinslogo umwandeln (Zuschnitt, rund, ICO), Start ohne Logo |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
 
 `tests/conftest.py` enthält die Hilfsklasse `Verein`, mit der sich Abläufe lesbar in Euro
@@ -252,6 +299,7 @@ dikas/
   sicherung.py      Automatische lokale Sicherung, letzte 10 Stände, Wiederherstellen
   datenaustausch.py Export/Import für die Weitergabe an andere PCs, Warnungen
   geld.py           Cent <-> "12,50 €"
+  logo.py           Eigenes Vereinslogo einbauen (PNG + ICO erzeugen)
   db/
     models.py       Tabellen (Konto, Statuswechsel, Buchung, Einstellung, Mailversand)
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung

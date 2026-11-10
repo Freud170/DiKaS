@@ -22,7 +22,7 @@ dikas = "dikas.app:main"
 include = ["dikas*"]
 
 [tool.setuptools.package-data]
-"dikas.ui" = ["*.svg", "*.png"]
+"dikas.ui" = ["*.svg", "*.png", "*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

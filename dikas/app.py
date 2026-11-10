@@ -13,6 +13,11 @@ from dikas.ui.hauptfenster import Hauptfenster
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        # Eigene App-ID, damit die Taskleiste das Vereinslogo zeigt statt des Python-Symbols
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("DiKaS")
     app = QApplication(sys.argv)
     app.setApplicationName("DiKaS")
     stil.anwenden(app)

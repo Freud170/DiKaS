@@ -27,6 +27,8 @@ INAKTIV = "#9aa3ae"
 
 HAKEN = (Path(__file__).parent / "haken.svg").as_posix()
 PROGRAMMSYMBOL = Path(__file__).parent / "symbol.png"
+# Eigenes Vereinslogo (nicht im Repo, siehe `python -m dikas.logo`) hat Vorrang vor dem Standardsymbol
+LOGO = Path(__file__).parent / "logo.png"
 
 STYLESHEET = f"""
 QWidget {{
@@ -307,8 +309,9 @@ def anwenden(app: QApplication) -> None:
     QLocale.setDefault(QLocale(QLocale.German, QLocale.Germany))
 
     app.setStyle("Fusion")
-    if PROGRAMMSYMBOL.exists():
-        app.setWindowIcon(QIcon(str(PROGRAMMSYMBOL)))
+    symbol = LOGO if LOGO.exists() else PROGRAMMSYMBOL
+    if symbol.exists():
+        app.setWindowIcon(QIcon(str(symbol)))
     app.setFont(QFont("Segoe UI", 10))
     palette = app.palette()
     palette.setColor(QPalette.Window, QColor(HINTERGRUND))

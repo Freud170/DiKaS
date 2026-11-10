@@ -36,12 +36,18 @@ $alterPath = $env:Path
 $pythonBasis = & $python -c "import sys; print(sys.base_prefix)"
 $env:Path = "$env:SystemRoot\System32;$env:SystemRoot;$pythonBasis;$(Split-Path $python)"
 try {
+# Eigenes Vereinslogo (python -m dikas.logo) hat Vorrang vor dem Standardsymbol
+$logoIco = Join-Path $projekt 'dikas\ui\logo.ico'
+$logoPng = Join-Path $projekt 'dikas\ui\logo.png'
+$symbol = if (Test-Path $logoIco) { $logoIco } else { Join-Path $PSScriptRoot "dikas.ico" }
+$logoDaten = if (Test-Path $logoPng) { @("--add-data", "$logoPng;dikas\ui") } else { @() }
 & $python -m PyInstaller `
     --noconfirm --clean --windowed `
     --name DiKaS `
-    --icon (Join-Path $PSScriptRoot "dikas.ico") `
+    --icon $symbol `
     --add-data "$(Join-Path $projekt 'dikas\ui\haken.svg');dikas\ui" `
     --add-data "$(Join-Path $projekt 'dikas\ui\symbol.png');dikas\ui" `
+    @logoDaten `
     --distpath (Join-Path $build "dist") `
     --workpath (Join-Path $build "work") `
     --specpath $build `
