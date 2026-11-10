@@ -47,6 +47,14 @@ def qt_aufraeumen():
     QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
+@pytest.fixture(autouse=True)
+def eigene_ansichtseinstellungen(tmp_path):
+    """QSettings (z. B. Spalten der Kontenliste) pro Test in einen leeren Ordner, nie nach %APPDATA%."""
+    from PySide6.QtCore import QSettings
+
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path / "qsettings"))
+
+
 @pytest.fixture
 def engine():
     engine = erstelle_engine(":memory:")

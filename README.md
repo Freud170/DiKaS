@@ -58,9 +58,14 @@ Ergebnis: `build\installer\DiKaS-Setup-<Version>.exe` (ca. 40 MB). Die Version s
   Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (optional, kann
   nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,
   Bierspitz und E-Mail.
-- **Kontenliste**: Spalten Vorname, Nachname, Bierspitz, Typ, Status, Eintritt, Saldo. Sortierbar
+- **Kontenliste**: Spalten Nachname, Vorname, Bierspitz, Typ, Status, Eintritt, Saldo. Sortierbar
   über die Auswahl neben dem Filter (z. B. „Nachname A–Z“, „Saldo: höchster zuerst“) oder per
   Klick auf die Spaltenüberschrift (zweiter Klick dreht um). Leere Werte stehen immer unten.
+  Spalten lassen sich an der Überschrift **verschieben** (ziehen) und per **Rechtsklick** ein-
+  und ausblenden („Standardansicht“ stellt alles zurück). Das merkt sich DiKaS pro PC in
+  `%APPDATA%\DiKaS\DiKaS.ini` – nicht in der Vereinsdatenbank, also auch nicht im Export.
+- Spaltenbreiten passen sich der Fenstergröße an (auch im Vollbild); ist das Fenster zu schmal,
+  lässt sich die Liste waagerecht scrollen.
 - **Buchungssuche** (über der Buchungsliste): findet Text, Beleg und Kontonamen; eine Zahl wie
   `25` oder `12,50` findet außerdem alle Buchungen über genau diesen Betrag. Gilt für das gewählte
   Konto bzw. alle Buchungen.
@@ -288,7 +293,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geldorte.py` | Mehrere Geldorte, Geldtransfer, Deaktivieren, Buchungsdialog, Auswertung |
 | `test_geld.py` | Betragseingabe und -anzeige |
-| `test_listen.py` | Kontenliste (Spalten, Sortierung, Spaltenkopf-Klick), Buchungssuche (Text, Betrag) |
+| `test_listen.py` | Kontenliste (Spalten, Sortierung, Verschieben/Ausblenden), Spaltenbreiten, Buchungssuche |
 | `test_logo.py` | Vereinslogo umwandeln (Zuschnitt, rund, ICO), Start ohne Logo |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
 

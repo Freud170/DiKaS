@@ -1,10 +1,11 @@
 """Wiederverwendbare Oberflächen-Bausteine: Tabellenzellen, Kennzahl-Karten, Panels."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIntValidator
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QTableWidgetItem,
@@ -42,6 +43,47 @@ def fett_machen(item: QTableWidgetItem) -> None:
     schrift = QFont(item.font())
     schrift.setWeight(QFont.DemiBold)
     item.setFont(schrift)
+
+
+class Spaltenbreiten(QObject):
+    """Spalten so breit wie ihr Inhalt; übriger Platz wird verteilt, damit die Tabelle auch im
+    Vollbild die ganze Breite füllt. Reicht der Platz nicht, scrollt die Tabelle waagerecht –
+    keine Spalte wird zusammengequetscht.
+
+    `verteilen_auf`: Spalte, die den freien Platz bekommt (z. B. Buchungstext); sonst gleichmäßig.
+    Nach dem Neubefüllen der Tabelle `anpassen()` aufrufen.
+    """
+
+    def __init__(self, tabelle, verteilen_auf: int | None = None):
+        super().__init__(tabelle)
+        self.tabelle = tabelle
+        self.verteilen_auf = verteilen_auf
+        tabelle.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        tabelle.viewport().installEventFilter(self)
+
+    def eventFilter(self, objekt, ereignis):
+        if ereignis.type() == QEvent.Resize:
+            self.anpassen()
+        return False
+
+    def anpassen(self) -> None:
+        t = self.tabelle
+        kopf = t.horizontalHeader()
+        sichtbar = [s for s in range(t.columnCount()) if not kopf.isSectionHidden(s)]
+        if not sichtbar:
+            return
+        breiten = {s: max(t.sizeHintForColumn(s), kopf.sectionSizeHint(s)) for s in sichtbar}
+        frei = t.viewport().width() - sum(breiten.values())
+        if frei > 0:
+            if self.verteilen_auf in breiten:
+                breiten[self.verteilen_auf] += frei
+            else:
+                anteil, rest = divmod(frei, len(sichtbar))
+                for i, s in enumerate(sichtbar):
+                    breiten[s] += anteil + (1 if i < rest else 0)
+        for s, breite in breiten.items():
+            if kopf.sectionSize(s) != breite:
+                kopf.resizeSection(s, breite)
 
 
 # Statt QSpinBox: Die Zahlenfelder von Qt verschlucken mit unserem Stylesheet ihren Text.

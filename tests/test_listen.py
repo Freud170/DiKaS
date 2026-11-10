@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from dikas import buchhaltung as bh
 from dikas.db.models import KontoTyp, MitgliedStatus as St
 from dikas.ui.hauptfenster import (
-    BIERSPITZ, KONTEN_SORTIERUNG, NACHNAME, NAME_ROLLE, VORNAME, Hauptfenster,
+    BIERSPITZ, KONTEN_SORTIERUNG, KONTEN_SPALTEN, NACHNAME, NAME_ROLLE, SALDO, VORNAME, Hauptfenster,
 )
 
 from conftest import Verein
@@ -60,20 +60,102 @@ def sortiere(w, text):
 
 # --- Kontenliste ------------------------------------------------------------
 
-def test_spalten_vorname_nachname_bierspitz(fenster):
+def sichtbare_spalten(w):
+    """Überschriften in der angezeigten Reihenfolge, ohne ausgeblendete Spalten."""
+    kopf = w.konten_tabelle.horizontalHeader()
+    return [KONTEN_SPALTEN[kopf.logicalIndex(v)] for v in range(kopf.count())
+            if not kopf.isSectionHidden(kopf.logicalIndex(v))]
+
+
+def test_spalten_nachname_vorname_bierspitz(fenster):
     t = fenster.konten_tabelle
-    kopf = [t.horizontalHeaderItem(i).text() for i in range(t.columnCount())]
-    assert kopf[:3] == ["Vorname", "Nachname", "Bierspitz"]
+    assert sichtbare_spalten(fenster) == [
+        "Nachname", "Vorname", "Bierspitz", "Typ", "Status", "Eintritt", "Saldo"]
     z = namen(fenster).index("Ben von Ärmel")
-    assert [t.item(z, i).text() for i in (VORNAME, NACHNAME, BIERSPITZ)] == ["Ben", "von Ärmel", "Bärchen"]
+    assert [t.item(z, i).text() for i in (NACHNAME, VORNAME, BIERSPITZ)] == ["von Ärmel", "Ben", "Bärchen"]
 
 
-def test_kasse_ueber_beide_namensspalten(fenster):
+def test_kasse_in_der_namensspalte(fenster):
     t = fenster.konten_tabelle
     z = namen(fenster).index("Getränkekasse")
-    assert t.item(z, VORNAME).text() == "Getränkekasse"
-    assert t.columnSpan(z, VORNAME) == 2
-    assert t.columnSpan(namen(fenster).index("Zoe Adler"), VORNAME) == 1
+    assert (t.item(z, NACHNAME).text(), t.item(z, VORNAME).text()) == ("Getränkekasse", "")
+
+
+# --- Spalten verschieben / ausblenden (pro PC gemerkt) ------------------------
+
+def neues_fenster(fenster):
+    return Hauptfenster(fenster.Session, "test")
+
+
+def test_spalte_ausblenden_und_merken(fenster):
+    menue = fenster.spalten_menue()
+    aktionen = {a.text(): a for a in menue.actions() if a.text()}
+    assert not aktionen["Nachname"].isEnabled()  # bleibt immer sichtbar
+    aktionen["Typ"].setChecked(False)
+    assert "Typ" not in sichtbare_spalten(fenster)
+    w2 = neues_fenster(fenster)
+    assert "Typ" not in sichtbare_spalten(w2)
+    w2.close()
+
+
+def test_spalte_verschieben_und_merken(fenster):
+    kopf = fenster.konten_tabelle.horizontalHeader()
+    kopf.moveSection(kopf.visualIndex(SALDO), 1)  # Saldo direkt hinter Nachname
+    assert sichtbare_spalten(fenster)[:3] == ["Nachname", "Saldo", "Vorname"]
+    w2 = neues_fenster(fenster)
+    assert sichtbare_spalten(w2)[:3] == ["Nachname", "Saldo", "Vorname"]
+    # Sortieren per Klick nutzt trotzdem die richtige Spalte
+    w2.konten_tabelle.horizontalHeader().sectionClicked.emit(SALDO)
+    assert w2.sortierung.currentText() == "Saldo: niedrigster zuerst"
+    w2.close()
+
+
+def test_standardansicht(fenster):
+    kopf = fenster.konten_tabelle.horizontalHeader()
+    kopf.moveSection(kopf.visualIndex(SALDO), 0)
+    fenster.spalte_zeigen(BIERSPITZ, False)
+    fenster.spalten_zuruecksetzen()
+    assert sichtbare_spalten(fenster) == KONTEN_SPALTEN
+    w2 = neues_fenster(fenster)
+    assert sichtbare_spalten(w2) == KONTEN_SPALTEN
+    w2.close()
+
+
+def test_kaputte_einstellung_wird_ignoriert(fenster):
+    e = fenster._einstellungen()
+    e.setValue("konten/reihenfolge", "3,x,1")
+    e.setValue("konten/ausgeblendet", "0,99")
+    w2 = neues_fenster(fenster)
+    assert sichtbare_spalten(w2) == KONTEN_SPALTEN
+    w2.close()
+
+
+# --- Spaltenbreiten passen sich der Fenstergröße an ---------------------------
+
+@pytest.mark.parametrize("tabelle", ["konten_tabelle", "buchungen_tabelle"])
+def test_spalten_fuellen_breites_fenster(app, fenster, tabelle):
+    fenster.resize(2400, 900)
+    fenster.show()
+    app.processEvents()
+    t = getattr(fenster, tabelle)
+    kopf = t.horizontalHeader()
+    sichtbar = [s for s in range(t.columnCount()) if not kopf.isSectionHidden(s)]
+    belegt = sum(kopf.sectionSize(s) for s in sichtbar)
+    inhalt = sum(max(t.sizeHintForColumn(s), kopf.sectionSizeHint(s)) for s in sichtbar)
+    # Füllt die ganze Breite – außer der Inhalt ist breiter, dann waagerecht scrollen
+    assert belegt == max(t.viewport().width(), inhalt)
+
+
+def test_schmales_fenster_quetscht_keine_spalte(app, fenster):
+    fenster.resize(2400, 900)
+    fenster.show()
+    app.processEvents()
+    fenster.resize(900, 700)
+    app.processEvents()
+    t = fenster.konten_tabelle
+    kopf = t.horizontalHeader()
+    for s in range(t.columnCount()):
+        assert kopf.sectionSize(s) >= max(t.sizeHintForColumn(s), kopf.sectionSizeHint(s))
 
 
 def test_standard_nach_typ_dann_nachname(fenster):
@@ -175,3 +257,24 @@ def test_zahl_findet_nur_ganze_zahlen_im_text(verein):
     assert treffer == {"Runde für 25 Leute", "Spende"}
     assert bh.buchung_passt(b2025, "2025")
     assert bh.buchung_passt(b2025, "75,00 €")
+
+
+def test_vollbild_gibt_buchungen_mehr_platz(app, fenster):
+    fenster.show()
+    fenster.resize(2400, 1000)
+    app.processEvents()
+    links, rechts = fenster.splitter.sizes()
+    gesamt = fenster.splitter.width() - fenster.splitter.handleWidth()
+    assert links == int(gesamt * 0.45)
+    assert rechts > links
+
+
+def test_eigene_aufteilung_bleibt(app, fenster):
+    fenster.show()
+    app.processEvents()
+    fenster.splitter.splitterMoved.emit(500, 1)  # wie beim Ziehen des Trenners
+    fenster.splitter.setSizes([500, 800])
+    fenster.resize(2400, 1000)
+    app.processEvents()
+    gesamt = fenster.splitter.width() - fenster.splitter.handleWidth()
+    assert fenster.splitter.sizes()[0] != int(gesamt * 0.45)

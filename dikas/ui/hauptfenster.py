@@ -4,7 +4,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QSize, QStandardPaths, Qt, QUrl
+from PySide6.QtCore import QEvent, QProcess, QSettings, QSize, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -38,7 +37,7 @@ from dikas.ui.auswertung import AuswertungDialog
 from dikas.ui.einstellungen_dialog import einstellungen_bearbeiten
 from dikas.ui.sicherungen_dialog import SicherungenDialog
 from dikas.ui.versand_dialog import VersandDialog
-from dikas.ui.bausteine import GRAU, Kennzahl, Panel
+from dikas.ui.bausteine import GRAU, Kennzahl, Panel, Spaltenbreiten
 from dikas.ui.bausteine import betrag_zelle as _betrag_zelle
 from dikas.ui.bausteine import zelle as _zelle
 from dikas.ui.dialoge import BeitragDialog, BuchungDialog, KontoDialog
@@ -60,7 +59,8 @@ KONTEN_FILTER = {
 }
 
 # Spalten der Kontenliste
-VORNAME, NACHNAME, BIERSPITZ, TYP, STATUS, EINTRITT, SALDO = range(7)
+NACHNAME, VORNAME, BIERSPITZ, TYP, STATUS, EINTRITT, SALDO = range(7)
+KONTEN_SPALTEN = ["Nachname", "Vorname", "Bierspitz", "Typ", "Status", "Eintritt", "Saldo"]
 # Am ersten Feld jeder Zeile: voller Kontoname (z. B. "Tom Becker"), unabhängig von der Spaltenaufteilung
 NAME_ROLLE = Qt.UserRole + 1
 
@@ -149,12 +149,19 @@ class Hauptfenster(QMainWindow):
         self.sortierung.addItems(KONTEN_SORTIERUNG)
         self.sortierung.setToolTip("Reihenfolge der Konten (auch per Klick auf die Spaltenüberschrift)")
         self.sortierung.currentIndexChanged.connect(self.aktualisieren)
-        self.konten_tabelle = self._neue_tabelle(
-            ["Vorname", "Nachname", "Bierspitz", "Typ", "Status", "Eintritt", "Saldo"], rechts=[SALDO]
-        )
+        self.konten_tabelle = self._neue_tabelle(KONTEN_SPALTEN, rechts=[SALDO])
+        self.konten_breiten = Spaltenbreiten(self.konten_tabelle)
         kopf = self.konten_tabelle.horizontalHeader()
         kopf.setSectionsClickable(True)
         kopf.sectionClicked.connect(self._sortiere_nach_spalte)
+        # Spalten verschieben (ziehen) und per Rechtsklick ein-/ausblenden; wird pro PC gemerkt
+        kopf.setSectionsMovable(True)
+        kopf.setContextMenuPolicy(Qt.CustomContextMenu)
+        kopf.customContextMenuRequested.connect(
+            lambda pos: self.spalten_menue().exec(kopf.mapToGlobal(pos))
+        )
+        self._lade_spalten()
+        kopf.sectionMoved.connect(self._speichere_spalten)
         self.konten_tabelle.itemSelectionChanged.connect(self.lade_buchungen)
         self.konten_tabelle.itemDoubleClicked.connect(self.konto_bearbeiten)
 
@@ -176,7 +183,7 @@ class Hauptfenster(QMainWindow):
         self.buchungen_tabelle = self._neue_tabelle(
             ["Datum", "Art", "Beleg", "Text", "Soll", "Haben", "Betrag", "Status"], rechts=[6]
         )
-        self.buchungen_tabelle.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.buchungen_breiten = Spaltenbreiten(self.buchungen_tabelle, verteilen_auf=3)  # Text
 
         rechts = Panel("")
         self.buchungen_titel = rechts.titel
@@ -226,7 +233,13 @@ class Hauptfenster(QMainWindow):
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(links)
         splitter.addWidget(rechts)
-        splitter.setSizes([740, 580])  # links genug Platz für Vorname, Nachname, Bierspitz, Status, Eintritt, Saldo
+        splitter.setSizes([740, 580])  # links genug Platz für Nachname, Vorname, Bierspitz, Status, Eintritt, Saldo
+        # Bei jeder Fenstergröße neu aufteilen (Vollbild: Buchungen bekommen mehr) –
+        # bis der Trenner von Hand gezogen wird, dann gilt die eigene Aufteilung
+        self.splitter = splitter
+        self._aufteilung_manuell = False
+        splitter.splitterMoved.connect(lambda *_: setattr(self, "_aufteilung_manuell", True))
+        splitter.installEventFilter(self)
 
         inhalt = QWidget()
         layout = QVBoxLayout(inhalt)
@@ -343,15 +356,13 @@ class Hauptfenster(QMainWindow):
         if sortierung is not None:
             kopf.setSortIndicator(sortierung[0], Qt.DescendingOrder if sortierung[1] else Qt.AscendingOrder)
 
-        self.konten_tabelle.clearSpans()
         self.konten_tabelle.setRowCount(len(konten))
         for zeile, konto in enumerate(konten):
             if _hat_namensteile(konto):
-                namen = [_zelle(konto.vorname), _zelle(konto.nachname)]
+                namen = [_zelle(konto.nachname), _zelle(konto.vorname)]
             else:
-                # Kassen, Geldorte: Name über beide Namensspalten
+                # Kassen, Geldorte: Name in der ersten Spalte
                 namen = [_zelle(konto.name), _zelle("")]
-                self.konten_tabelle.setSpan(zeile, VORNAME, 1, 2)
             namen[0].setData(Qt.UserRole, konto.id)
             namen[0].setData(NAME_ROLLE, konto.name)
             werte = [
@@ -369,6 +380,7 @@ class Hauptfenster(QMainWindow):
             if konto.id == gewaehlt:
                 self.konten_tabelle.selectRow(zeile)
         self.konten_tabelle.blockSignals(False)
+        self.konten_breiten.anpassen()
         self.konten_info.setText(f"{len(konten)} von {len(alle)}")
 
         self._aktualisiere_kennzahlen(alle, salden)
@@ -396,6 +408,80 @@ class Hauptfenster(QMainWindow):
         self.karte_kassen.setze(kassen, stil.NEGATIV if kassen < 0 else None)
         self.karte_guthaben.setze(guthaben)
         self.karte_offen.setze(offen, stil.NEGATIV if offen else None)
+
+    KONTEN_MINDESTBREITE = 740
+
+    def eventFilter(self, objekt, ereignis):
+        if objekt is getattr(self, "splitter", None) and ereignis.type() == QEvent.Resize:
+            self._splitter_aufteilen()
+        return super().eventFilter(objekt, ereignis)
+
+    def _splitter_aufteilen(self):
+        """Konten 45 % der Breite (mind. 740 px für alle Spalten), Rest für die Buchungen."""
+        if self._aufteilung_manuell:
+            return
+        gesamt = self.splitter.width() - self.splitter.handleWidth()
+        links = min(max(self.KONTEN_MINDESTBREITE, int(gesamt * 0.45)), gesamt - 400)
+        if links > 0:
+            self.splitter.setSizes([links, gesamt - links])
+
+    # --- Spalten der Kontenliste (Reihenfolge, Sichtbarkeit) --------------
+
+    @staticmethod
+    def _einstellungen() -> QSettings:
+        """Ansichtseinstellungen dieses PCs (%APPDATA%\\DiKaS\\DiKaS.ini), nicht in der Vereinsdatenbank."""
+        return QSettings(QSettings.IniFormat, QSettings.UserScope, "DiKaS", "DiKaS")
+
+    def _lade_spalten(self):
+        kopf = self.konten_tabelle.horizontalHeader()
+        e = self._einstellungen()
+        try:
+            reihenfolge = [int(s) for s in str(e.value("konten/reihenfolge", "")).split(",") if s]
+            versteckt = {int(s) for s in str(e.value("konten/ausgeblendet", "")).split(",") if s}
+        except ValueError:
+            return
+        if sorted(reihenfolge) == list(range(len(KONTEN_SPALTEN))):
+            for ziel, spalte in enumerate(reihenfolge):
+                kopf.moveSection(kopf.visualIndex(spalte), ziel)
+        for spalte in versteckt - {NACHNAME}:
+            if 0 <= spalte < len(KONTEN_SPALTEN):
+                kopf.setSectionHidden(spalte, True)
+
+    def _speichere_spalten(self, *_):
+        kopf = self.konten_tabelle.horizontalHeader()
+        anzahl = len(KONTEN_SPALTEN)
+        e = self._einstellungen()
+        e.setValue("konten/reihenfolge", ",".join(str(kopf.logicalIndex(v)) for v in range(anzahl)))
+        e.setValue("konten/ausgeblendet", ",".join(str(s) for s in range(anzahl) if kopf.isSectionHidden(s)))
+
+    def spalten_menue(self) -> QMenu:
+        """Rechtsklick auf die Spaltenüberschrift: Spalten ein-/ausblenden, Standard wiederherstellen."""
+        kopf = self.konten_tabelle.horizontalHeader()
+        menue = QMenu(self)
+        for spalte, titel in enumerate(KONTEN_SPALTEN):
+            aktion = menue.addAction(titel)
+            aktion.setCheckable(True)
+            aktion.setChecked(not kopf.isSectionHidden(spalte))
+            aktion.setEnabled(spalte != NACHNAME)  # Nachname/Kontoname bleibt immer sichtbar
+            aktion.toggled.connect(lambda an, s=spalte: self.spalte_zeigen(s, an))
+        menue.addSeparator()
+        menue.addAction("Standardansicht", self.spalten_zuruecksetzen)
+        return menue
+
+    def spalte_zeigen(self, spalte: int, sichtbar: bool):
+        if spalte == NACHNAME:
+            return
+        self.konten_tabelle.horizontalHeader().setSectionHidden(spalte, not sichtbar)
+        self._speichere_spalten()
+        self.konten_breiten.anpassen()
+
+    def spalten_zuruecksetzen(self):
+        kopf = self.konten_tabelle.horizontalHeader()
+        for spalte in range(len(KONTEN_SPALTEN)):
+            kopf.setSectionHidden(spalte, False)
+            kopf.moveSection(kopf.visualIndex(spalte), spalte)
+        self._speichere_spalten()
+        self.konten_breiten.anpassen()
 
     def _sortiere_nach_spalte(self, spalte: int):
         """Klick auf eine Spaltenüberschrift: aufsteigend sortieren, beim zweiten Klick absteigend."""
@@ -448,6 +534,7 @@ class Hauptfenster(QMainWindow):
                     if b.ist_storniert or b.ist_storno:
                         item.setForeground(GRAU)
                     self.buchungen_tabelle.setItem(zeile, spalte, item)
+        self.buchungen_breiten.anpassen()
 
     # --- Aktionen ---------------------------------------------------------
 
