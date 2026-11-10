@@ -58,6 +58,12 @@ Ergebnis: `build\installer\DiKaS-Setup-<Version>.exe` (ca. 40 MB). Die Version s
   Eintrittsdatum, **Bierspitz** (Spitzname, optional) und **E-Mail-Adresse** (optional, kann
   nachgetragen werden; wird beim Kontoauszug-Versand gebraucht). Die Suche findet Name,
   Bierspitz und E-Mail.
+- **Kontenliste**: Spalten Vorname, Nachname, Bierspitz, Typ, Status, Eintritt, Saldo. Sortierbar
+  über die Auswahl neben dem Filter (z. B. „Nachname A–Z“, „Saldo: höchster zuerst“) oder per
+  Klick auf die Spaltenüberschrift (zweiter Klick dreht um). Leere Werte stehen immer unten.
+- **Buchungssuche** (über der Buchungsliste): findet Text, Beleg und Kontonamen; eine Zahl wie
+  `25` oder `12,50` findet außerdem alle Buchungen über genau diesen Betrag. Gilt für das gewählte
+  Konto bzw. alle Buchungen.
 - **Kassen**: beliebig viele, getrennt geführt
 - **Geldorte (KW)**: wo das tatsächlich vorhandene Geld liegt, z. B. „Bargeld“, „Bankkonto“
   oder vorübergehend „Bei Max Mustermann“. Der erste („KW“) wird automatisch angelegt, weitere
@@ -282,6 +288,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
 | `test_geldorte.py` | Mehrere Geldorte, Geldtransfer, Deaktivieren, Buchungsdialog, Auswertung |
 | `test_geld.py` | Betragseingabe und -anzeige |
+| `test_listen.py` | Kontenliste (Spalten, Sortierung, Spaltenkopf-Klick), Buchungssuche (Text, Betrag) |
 | `test_logo.py` | Vereinslogo umwandeln (Zuschnitt, rund, ICO), Start ohne Logo |
 | `test_ui.py` | Hauptfenster und Dialoge (ohne sichtbares Fenster) |
 
@@ -306,7 +313,7 @@ dikas/
   ui/
     stil.py         Farben, Stylesheet, Symbole, deutsche Qt-Texte
     bausteine.py    Gemeinsame Bausteine (Tabellenzellen, Kennzahl-Karten, Panels)
-    hauptfenster.py Kennzahlen, Kontenübersicht (Suche/Filter) + Buchungsliste
+    hauptfenster.py Kennzahlen, Kontenübersicht (Suche/Filter/Sortierung) + Buchungsliste (Suche)
     auswertung.py   Auswertung über einen Zeitraum + PDF-Export
     einstellungen_dialog.py  Einstellungen bearbeiten
     versand_dialog.py        Kontoauszüge per E-Mail versenden

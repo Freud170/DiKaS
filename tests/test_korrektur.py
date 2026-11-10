@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from dikas import buchhaltung as bh
 from dikas.db.models import Buchungsart as Art, MitgliedStatus as St
 from dikas.ui.dialoge import BuchungDialog
-from dikas.ui.hauptfenster import Hauptfenster
+from dikas.ui.hauptfenster import NAME_ROLLE, SALDO, Hauptfenster
 
 from conftest import Verein, ct
 
@@ -199,8 +199,8 @@ class TestOberflaeche:
         fenster.buchungen_tabelle.selectRow(0)
         fenster.korrigiere_auswahl()
         t = fenster.konten_tabelle
-        zeile = next(r for r in range(t.rowCount()) if t.item(r, 0).text() == "Tom Becker")
-        assert t.item(zeile, 5).text() == "10,00 €"
+        zeile = next(r for r in range(t.rowCount()) if t.item(r, 0).data(NAME_ROLLE) == "Tom Becker")
+        assert t.item(zeile, SALDO).text() == "10,00 €"
         assert fenster.buchungen_tabelle.rowCount() == 3  # Original, Storno, neue Buchung
 
     def test_korrigieren_ohne_auswahl(self, fenster, monkeypatch):

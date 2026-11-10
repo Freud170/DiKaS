@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from dikas import buchhaltung as bh
 from dikas.db.models import Buchungsart as Art, Konto, KontoTyp, MitgliedStatus as St
-from dikas.ui.hauptfenster import Hauptfenster
+from dikas.ui.hauptfenster import NAME_ROLLE, Hauptfenster
 
 from conftest import ct
 
@@ -173,14 +173,14 @@ def fenster(engine, monkeypatch):
 def waehle(w, name):
     t = w.konten_tabelle
     for r in range(t.rowCount()):
-        if t.item(r, 0).text() == name:
+        if t.item(r, 0).data(NAME_ROLLE) == name:
             t.selectRow(r)
             return
     raise AssertionError(f"{name} nicht sichtbar")
 
 
 def namen(w):
-    return {w.konten_tabelle.item(r, 0).text() for r in range(w.konten_tabelle.rowCount())}
+    return {w.konten_tabelle.item(r, 0).data(NAME_ROLLE) for r in range(w.konten_tabelle.rowCount())}
 
 
 def test_ui_loeschen_und_wiederherstellen(fenster):

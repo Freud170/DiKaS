@@ -59,6 +59,61 @@ KONTEN_FILTER = {
     "Gelöschte": lambda k: k.geloescht,
 }
 
+# Spalten der Kontenliste
+VORNAME, NACHNAME, BIERSPITZ, TYP, STATUS, EINTRITT, SALDO = range(7)
+# Am ersten Feld jeder Zeile: voller Kontoname (z. B. "Tom Becker"), unabhängig von der Spaltenaufteilung
+NAME_ROLLE = Qt.UserRole + 1
+
+# Sortierung der Kontenliste: Beschriftung -> (Spalte, absteigend); None = nach Typ, dann Nachname.
+# Ein Klick auf die Spaltenüberschrift wählt den passenden Eintrag (zweiter Klick: umgekehrt).
+KONTEN_SORTIERUNG = {
+    "Sortierung: Standard": None,
+    "Nachname A–Z": (NACHNAME, False),
+    "Nachname Z–A": (NACHNAME, True),
+    "Vorname A–Z": (VORNAME, False),
+    "Vorname Z–A": (VORNAME, True),
+    "Bierspitz A–Z": (BIERSPITZ, False),
+    "Bierspitz Z–A": (BIERSPITZ, True),
+    "Status (Fux zuerst)": (STATUS, False),
+    "Status (Fux zuletzt)": (STATUS, True),
+    "Eintritt: älteste zuerst": (EINTRITT, False),
+    "Eintritt: neueste zuerst": (EINTRITT, True),
+    "Saldo: niedrigster zuerst": (SALDO, False),
+    "Saldo: höchster zuerst": (SALDO, True),
+}
+
+
+def _hat_namensteile(konto: Konto) -> bool:
+    return konto.typ == KontoTyp.PRIVAT and bool(konto.vorname or konto.nachname)
+
+
+def _sortierwert(spalte: int, konto: Konto, saldo: int):
+    """Wert, nach dem eine Spalte sortiert; None = leer (steht immer unten)."""
+    if spalte == VORNAME:
+        return buchhaltung.sortierform(konto.vorname) if _hat_namensteile(konto) and konto.vorname else None
+    if spalte == NACHNAME:
+        return buchhaltung.sortierschluessel(konto) if _hat_namensteile(konto) and konto.nachname else None
+    if spalte == BIERSPITZ:
+        return buchhaltung.sortierform(konto.bierspitz) or None
+    if spalte == STATUS:
+        return list(MitgliedStatus).index(konto.status) if konto.status else None
+    if spalte == EINTRITT:
+        return konto.eintrittsdatum
+    return saldo
+
+
+def sortiere_konten(konten: list[Konto], salden: dict[int, int], sortierung) -> list[Konto]:
+    """Grundordnung: Geldorte, Kassen, Mitglieder (je nach Nachname); dann die gewählte Spalte."""
+    basis = sorted(konten, key=lambda k: (k.typ.reihenfolge, buchhaltung.sortierschluessel(k)))
+    if sortierung is None:
+        return basis
+    spalte, absteigend = sortierung
+    werte = {k.id: _sortierwert(spalte, k, salden.get(k.id, 0)) for k in basis}
+    mit_wert = [k for k in basis if werte[k.id] is not None]
+    # sort() ist stabil (auch rückwärts): Gleichstände bleiben in der Grundordnung
+    mit_wert.sort(key=lambda k: werte[k.id], reverse=absteigend)
+    return mit_wert + [k for k in basis if werte[k.id] is None]
+
 
 class Hauptfenster(QMainWindow):
     def __init__(self, session_factory: sessionmaker, db_pfad: str):
@@ -90,17 +145,29 @@ class Hauptfenster(QMainWindow):
         self.filter = QComboBox()
         self.filter.addItems(KONTEN_FILTER)
         self.filter.currentIndexChanged.connect(self.aktualisieren)
+        self.sortierung = QComboBox()
+        self.sortierung.addItems(KONTEN_SORTIERUNG)
+        self.sortierung.setToolTip("Reihenfolge der Konten (auch per Klick auf die Spaltenüberschrift)")
+        self.sortierung.currentIndexChanged.connect(self.aktualisieren)
         self.konten_tabelle = self._neue_tabelle(
-            ["Konto", "Bierspitz", "Typ", "Status", "Eintritt", "Saldo"], rechts=[5]
+            ["Vorname", "Nachname", "Bierspitz", "Typ", "Status", "Eintritt", "Saldo"], rechts=[SALDO]
         )
-        self.konten_tabelle.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        kopf = self.konten_tabelle.horizontalHeader()
+        kopf.setSectionsClickable(True)
+        kopf.sectionClicked.connect(self._sortiere_nach_spalte)
         self.konten_tabelle.itemSelectionChanged.connect(self.lade_buchungen)
         self.konten_tabelle.itemDoubleClicked.connect(self.konto_bearbeiten)
 
         links = Panel("Konten")
         auswahl = QHBoxLayout()
+        self.suche.setMinimumWidth(170)
+        # Auswahllisten nicht so breit wie ihr längster Eintrag, sonst bleibt fürs Suchfeld nichts übrig
+        for liste in (self.filter, self.sortierung):
+            liste.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            liste.setMinimumContentsLength(12)
         auswahl.addWidget(self.suche, 3)
         auswahl.addWidget(self.filter, 2)
+        auswahl.addWidget(self.sortierung, 2)
         links.layout_.addLayout(auswahl)
         links.layout_.addWidget(self.konten_tabelle)
         self.konten_info = links.info
@@ -116,6 +183,17 @@ class Hauptfenster(QMainWindow):
         self.buchungen_info = rechts.info
         # Aktionen für die ausgewählte Buchung in eigener Zeile über der Liste
         # (auch per Doppelklick/Rechtsklick)
+        # Suche in eigener Zeile, damit die Kontenliste links genug Breite behält
+        self.buchungssuche = QLineEdit()
+        self.buchungssuche.setPlaceholderText("Text, Beleg oder Betrag suchen …")
+        self.buchungssuche.setToolTip(
+            "Sucht in Text, Beleg und Kontonamen. Eine Zahl wie 25 oder 12,50 findet\n"
+            "außerdem alle Buchungen über genau diesen Betrag."
+        )
+        self.buchungssuche.setClearButtonEnabled(True)
+        self.buchungssuche.addAction(stil.symbol("EditFind"), QLineEdit.LeadingPosition)
+        self.buchungssuche.textChanged.connect(self.lade_buchungen)
+        rechts.layout_.addWidget(self.buchungssuche)
         aktionen = QHBoxLayout()
         for text, icon, tipp, slot in (
             ("Korrigieren", "MailMessageNew", "Ausgewählte Buchung korrigieren (Doppelklick)",
@@ -148,7 +226,7 @@ class Hauptfenster(QMainWindow):
         splitter.setChildrenCollapsible(False)
         splitter.addWidget(links)
         splitter.addWidget(rechts)
-        splitter.setSizes([600, 720])  # links genug Platz für Name, Bierspitz, Status, Eintritt, Saldo
+        splitter.setSizes([740, 580])  # links genug Platz für Vorname, Nachname, Bierspitz, Status, Eintritt, Saldo
 
         inhalt = QWidget()
         layout = QVBoxLayout(inhalt)
@@ -253,15 +331,31 @@ class Hauptfenster(QMainWindow):
             alle = buchhaltung.konten(session)
             salden = buchhaltung.salden(session)
             abstimmung = buchhaltung.abstimmung(session)
-        konten = sorted(
-            (k for k in alle if passt(k) and suchtext in f"{k.name} {k.bierspitz} {k.email}".lower()),
-            key=lambda k: (k.typ.reihenfolge, buchhaltung.sortierschluessel(k)),
+        sortierung = KONTEN_SORTIERUNG[self.sortierung.currentText()]
+        konten = sortiere_konten(
+            [k for k in alle if passt(k) and suchtext in f"{k.name} {k.bierspitz} {k.email}".lower()],
+            salden,
+            sortierung,
         )
 
+        kopf = self.konten_tabelle.horizontalHeader()
+        kopf.setSortIndicatorShown(sortierung is not None)
+        if sortierung is not None:
+            kopf.setSortIndicator(sortierung[0], Qt.DescendingOrder if sortierung[1] else Qt.AscendingOrder)
+
+        self.konten_tabelle.clearSpans()
         self.konten_tabelle.setRowCount(len(konten))
         for zeile, konto in enumerate(konten):
+            if _hat_namensteile(konto):
+                namen = [_zelle(konto.vorname), _zelle(konto.nachname)]
+            else:
+                # Kassen, Geldorte: Name über beide Namensspalten
+                namen = [_zelle(konto.name), _zelle("")]
+                self.konten_tabelle.setSpan(zeile, VORNAME, 1, 2)
+            namen[0].setData(Qt.UserRole, konto.id)
+            namen[0].setData(NAME_ROLLE, konto.name)
             werte = [
-                _zelle(konto.name, daten=konto.id),
+                *namen,
                 _zelle(konto.bierspitz),
                 _zelle(konto.typ.anzeige),
                 _zelle(konto.status.anzeige if konto.status else ""),
@@ -303,6 +397,17 @@ class Hauptfenster(QMainWindow):
         self.karte_guthaben.setze(guthaben)
         self.karte_offen.setze(offen, stil.NEGATIV if offen else None)
 
+    def _sortiere_nach_spalte(self, spalte: int):
+        """Klick auf eine Spaltenüberschrift: aufsteigend sortieren, beim zweiten Klick absteigend."""
+        aktuell = KONTEN_SORTIERUNG[self.sortierung.currentText()]
+        gewuenscht = (spalte, aktuell == (spalte, False))
+        for text, sortierung in KONTEN_SORTIERUNG.items():
+            if sortierung == gewuenscht:
+                self.sortierung.setCurrentText(text)
+                return
+        # Spalte ohne eigene Sortierung (Typ): Standard
+        self.sortierung.setCurrentIndex(0)
+
     def _gewaehltes_konto_id(self) -> int | None:
         zeilen = self.konten_tabelle.selectionModel().selectedRows()
         if not zeilen:
@@ -312,17 +417,18 @@ class Hauptfenster(QMainWindow):
     def lade_buchungen(self):
         konto_id = self._gewaehltes_konto_id()
         with self.Session() as session:
-            liste = buchhaltung.buchungen(session, konto_id)
+            alle = buchhaltung.buchungen(session, konto_id)
+            suchtext = self.buchungssuche.text()
+            liste = [b for b in alle if buchhaltung.buchung_passt(b, suchtext)]
+            anzahl = f"{len(liste)} von {len(alle)} Buchungen" if suchtext.strip() else f"{len(alle)} Buchungen"
             konto = session.get(Konto, konto_id) if konto_id is not ALLE_BUCHUNGEN else None
             if konto:
                 self.buchungen_titel.setText(f"Buchungen – {konto.name}")
                 saldo = buchhaltung.saldo(session, konto.id)
-                self.buchungen_info.setText(
-                    f"{len(liste)} Buchungen · Saldo <b>{cent_zu_text(saldo)}</b>"
-                )
+                self.buchungen_info.setText(f"{anzahl} · Saldo <b>{cent_zu_text(saldo)}</b>")
             else:
                 self.buchungen_titel.setText("Alle Buchungen")
-                self.buchungen_info.setText(f"{len(liste)} Buchungen")
+                self.buchungen_info.setText(anzahl)
             self.buchungen_tabelle.setRowCount(len(liste))
             for zeile, b in enumerate(liste):
                 # Aus Sicht des gewählten Kontos: Wirkung auf dessen Saldo

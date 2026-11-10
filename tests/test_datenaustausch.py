@@ -14,7 +14,7 @@ from dikas import einstellungen as es
 from dikas import sicherung
 from dikas.db import database, erstelle_engine, init_db
 from dikas.db.models import KontoTyp, MitgliedStatus as St
-from dikas.ui.hauptfenster import Hauptfenster
+from dikas.ui.hauptfenster import NAME_ROLLE, Hauptfenster
 
 
 class PC:
@@ -244,7 +244,7 @@ class TestOberflaeche:
         monkeypatch.setattr(QMessageBox, "question", lambda *a: fragen.append(a[2]) or QMessageBox.Yes)
         fenster.daten_importieren()
         assert "2 Mitglieder" in fragen[-1] and "Dieser PC" in fragen[-1]
-        namen = {fenster.konten_tabelle.item(r, 0).text() for r in range(fenster.konten_tabelle.rowCount())}
+        namen = {fenster.konten_tabelle.item(r, 0).data(NAME_ROLLE) for r in range(fenster.konten_tabelle.rowCount())}
         assert {"Anna", "Ben"} <= namen and "Tom" not in namen
 
     def test_import_abgebrochen(self, fenster, pcs, tmp_path, monkeypatch):
@@ -254,7 +254,7 @@ class TestOberflaeche:
         monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a: (str(datei), ""))
         monkeypatch.setattr(QMessageBox, "question", lambda *a: QMessageBox.No)
         fenster.daten_importieren()
-        namen = {fenster.konten_tabelle.item(r, 0).text() for r in range(fenster.konten_tabelle.rowCount())}
+        namen = {fenster.konten_tabelle.item(r, 0).data(NAME_ROLLE) for r in range(fenster.konten_tabelle.rowCount())}
         assert "Tom" in namen and "Anna" not in namen
 
     def test_import_kaputte_datei(self, fenster, tmp_path, monkeypatch):

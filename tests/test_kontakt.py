@@ -11,7 +11,7 @@ from dikas import buchhaltung as bh
 from dikas.db import erstelle_engine, init_db
 from dikas.db.models import KontoTyp, MitgliedStatus as St
 from dikas.ui.dialoge import KontoDialog
-from dikas.ui.hauptfenster import Hauptfenster
+from dikas.ui.hauptfenster import BIERSPITZ, NAME_ROLLE, Hauptfenster
 
 
 def mitglied(session, name="Tom Becker", **kwargs):
@@ -175,12 +175,12 @@ class TestHauptfenster:
         w.close()
 
     def namen(self, w):
-        return {w.konten_tabelle.item(r, 0).text() for r in range(w.konten_tabelle.rowCount())}
+        return {w.konten_tabelle.item(r, 0).data(NAME_ROLLE) for r in range(w.konten_tabelle.rowCount())}
 
     def test_bierspitz_spalte(self, fenster):
         t = fenster.konten_tabelle
-        zeile = next(r for r in range(t.rowCount()) if t.item(r, 0).text() == "Tom Becker")
-        assert t.item(zeile, 1).text() == "Tommy"
+        zeile = next(r for r in range(t.rowCount()) if t.item(r, 0).data(NAME_ROLLE) == "Tom Becker")
+        assert t.item(zeile, BIERSPITZ).text() == "Tommy"
 
     @pytest.mark.parametrize("suche, erwartet", [
         ("tommy", {"Tom Becker"}), ("ÄNNCHEN", {"Anna Schulz"}), ("verein.example", {"Anna Schulz"}),

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from dikas.db.database import teile_namen
 from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus, Statuswechsel
-from dikas.geld import cent_zu_text
+from dikas.geld import cent_zu_text, text_zu_cent
 
 
 class BuchhaltungsFehler(ValueError):
@@ -113,7 +113,7 @@ NAMENSZUSAETZE = {
 _UMLAUTE = str.maketrans({"ä": "a", "ö": "o", "ü": "u", "ß": "ss"})
 
 
-def _sortierform(text: str) -> str:
+def sortierform(text: str) -> str:
     """Kleinschreibung, Umlaute wie Grundbuchstaben (DIN 5007): 'Ärger' → 'arger'."""
     return text.casefold().translate(_UMLAUTE)
 
@@ -124,11 +124,11 @@ def sortierschluessel(konto: Konto) -> tuple[str, str, str]:
     'Gerda von Hahn' → ('hahn', 'gerda', …). Kassen/KW nach ihrem Namen.
     """
     if konto.typ != KontoTyp.PRIVAT or not konto.nachname:
-        return (_sortierform(konto.name), "", "")
+        return (sortierform(konto.name), "", "")
     woerter = konto.nachname.split()
     while len(woerter) > 1 and woerter[0].casefold() in NAMENSZUSAETZE:
         woerter.pop(0)
-    return (_sortierform(" ".join(woerter)), _sortierform(konto.vorname), _sortierform(konto.nachname))
+    return (sortierform(" ".join(woerter)), sortierform(konto.vorname), sortierform(konto.nachname))
 
 
 def _pruefe_status(typ: KontoTyp, status: MitgliedStatus | None) -> None:
@@ -587,6 +587,35 @@ def buchungen(
     if bis is not None:
         abfrage = abfrage.where(Buchung.datum <= bis)
     return list(session.scalars(abfrage).unique())
+
+
+_BETRAG_SUCHE = re.compile(r"[-+]?\d[\d.,]*\s*€?")
+
+
+def buchung_passt(buchung: Buchung, suchtext: str) -> bool:
+    """Suche in der Buchungsliste.
+
+    Jedes Wort muss in Text, Beleg oder einem der beiden Kontonamen vorkommen
+    (Groß-/Kleinschreibung und Umlaute egal). Sieht die Eingabe wie ein Betrag aus
+    ('25', '12,50', '-12,50 €'), passt außerdem jede Buchung über genau diesen Betrag.
+    """
+    suchtext = suchtext.strip()
+    if not suchtext:
+        return True
+    heuhaufen = sortierform(
+        f"{buchung.text} {buchung.beleg} {buchung.soll_konto.name} {buchung.haben_konto.name}"
+    )
+    # Nur reine Zahlen als Betrag lesen ('inf' o. ä. wäre für Decimal auch eine Zahl)
+    if _BETRAG_SUCHE.fullmatch(suchtext):
+        try:
+            if abs(text_zu_cent(suchtext)) == buchung.betrag_cent:
+                return True
+        except ValueError:
+            pass
+        # Zahl im Text nur als ganze Zahl: '25' findet nicht 'Beitrag 2025'
+        zahl = suchtext.replace("€", "").strip()
+        return re.search(rf"(?<![\d.,]){re.escape(zahl)}(?![\d])", heuhaufen) is not None
+    return all(wort in heuhaufen for wort in sortierform(suchtext).split())
 
 
 # --- Beiträge -------------------------------------------------------------

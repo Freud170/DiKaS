@@ -11,7 +11,7 @@ from dikas import buchhaltung as bh
 from dikas.db.models import Buchungsart as Art, KontoTyp, MitgliedStatus as St
 from dikas.ui import stil
 from dikas.ui.dialoge import UNBEKANNT, BeitragDialog, BuchungDialog, KontoDialog
-from dikas.ui.hauptfenster import Hauptfenster
+from dikas.ui.hauptfenster import NAME_ROLLE, SALDO, STATUS, Hauptfenster
 
 
 @pytest.fixture(scope="session")
@@ -52,7 +52,7 @@ def fenster(app, Sitzung):
 
 def zeile_von(tabelle, name):
     for r in range(tabelle.rowCount()):
-        if tabelle.item(r, 0).text() == name:
+        if tabelle.item(r, 0).data(NAME_ROLLE) == name:
             return r
     raise AssertionError(f"{name} nicht in Tabelle")
 
@@ -68,9 +68,9 @@ class TestHauptfenster:
     def test_zeigt_alle_konten_und_salden(self, fenster):
         t = fenster.konten_tabelle
         assert t.rowCount() == 6
-        assert t.item(zeile_von(t, "Tom"), 5).text() == "10,00 €"
-        assert t.item(zeile_von(t, "KW"), 5).text() == "10,00 €"
-        assert t.item(zeile_von(t, "Fritz"), 3).text() == "Fux"
+        assert t.item(zeile_von(t, "Tom"), SALDO).text() == "10,00 €"
+        assert t.item(zeile_von(t, "KW"), SALDO).text() == "10,00 €"
+        assert t.item(zeile_von(t, "Fritz"), STATUS).text() == "Fux"
 
     def test_abstimmung_in_statusleiste(self, fenster):
         assert "stimmt" in fenster.abstimmung.text()
@@ -108,7 +108,7 @@ class TestHauptfenster:
         fenster.buchungen_tabelle.selectRow(0)
         fenster.storniere_auswahl()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Tom"), 5).text() == "0,00 €"
+        assert t.item(zeile_von(t, "Tom"), SALDO).text() == "0,00 €"
         assert fenster.buchungen_tabelle.rowCount() == 2
         status = {fenster.buchungen_tabelle.item(r, 7).text() for r in range(2)}
         assert status == {"storniert", ""}
@@ -144,7 +144,7 @@ class TestHauptfenster:
             bh.buchen(s, Art.BEITRAG, ids["Fritz"], 3000, "Beitrag", gegenkonto_id=ids["Beitragskasse"])
         fenster.aktualisieren()
         t = fenster.konten_tabelle
-        assert t.item(zeile_von(t, "Fritz"), 5).foreground().color().name() == stil.NEGATIV
+        assert t.item(zeile_von(t, "Fritz"), SALDO).foreground().color().name() == stil.NEGATIV
 
 
 # --- Konto-Dialog ---------------------------------------------------------

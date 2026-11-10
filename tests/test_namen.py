@@ -14,7 +14,7 @@ from dikas.db import erstelle_engine, init_db
 from dikas.db.database import teile_namen
 from dikas.db.models import KontoTyp, MitgliedStatus as St
 from dikas.ui.dialoge import KontoDialog
-from dikas.ui.hauptfenster import Hauptfenster
+from dikas.ui.hauptfenster import NAME_ROLLE, Hauptfenster
 
 
 def mitglied(session, vorname, nachname, **kwargs):
@@ -230,6 +230,6 @@ def test_kontenliste_nach_nachname_sortiert(app, engine):
             mitglied(s, vorname, nachname)
     w = Hauptfenster(sessionmaker(engine, expire_on_commit=False), "test")
     w.filter.setCurrentText("Privatkonten")
-    namen = [w.konten_tabelle.item(r, 0).text() for r in range(w.konten_tabelle.rowCount())]
+    namen = [w.konten_tabelle.item(r, 0).data(NAME_ROLLE) for r in range(w.konten_tabelle.rowCount())]
     assert namen == ["Ben Adler", "Zoe Adler", "Anna Zimmer"]
     w.close()
