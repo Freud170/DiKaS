@@ -199,9 +199,13 @@ Buchungen hängen:
 
 - **Beim Buchen:** Im Dialog „Neue Buchung“ unter „Rechnungen“ auf „Datei …“ klicken oder
   Dateien aus dem Explorer auf den Dialog ziehen.
-- **Nachträglich:** Buchung markieren → Knopf **„Rechnungen“** über der Buchungsliste (oder
+- **Nachträglich beim Korrigieren:** Doppelklick auf die Buchung → unter „Neue Rechnungen“
+  Dateien hinzufügen (schon angehängte stehen darüber). Ändert sich nur die Rechnung, bleibt
+  die Buchung unverändert; wird neu gebucht, hängen alte und neue Rechnungen an der neuen Buchung.
+- **Verwalten:** Buchung markieren → Knopf **„Rechnungen“** über der Buchungsliste (oder
   Rechtsklick → „Rechnungen …“). Dort lassen sich Dateien anhängen (auch per Ziehen),
-  **öffnen** (Doppelklick, mit dem Standardprogramm), speichern und entfernen.
+  **öffnen** (Doppelklick, mit dem Standardprogramm), speichern und entfernen – auch bei
+  stornierten Buchungen, die sich nicht mehr korrigieren lassen.
 - Buchungen mit Rechnung zeigen eine **Büroklammer** in der Spalte „Beleg“; der Tooltip nennt
   die Dateinamen.
 

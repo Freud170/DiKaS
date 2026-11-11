@@ -327,12 +327,15 @@ class TestBuchungDialog:
         d.rechnungen.entfernen()
         assert d.dateien() == []
 
-    def test_korrektur_ohne_dateiauswahl(self, app, Sitzung):
+    def test_korrektur_mit_dateiauswahl_und_vorhandenen(self, app, Sitzung, dateien, meldungen):
         with Sitzung() as s:
             konten = bh.konten(s, nur_aktive=True)
             vorlage = bh.eingabe_aus_buchung(s.get(Buchung, buchung_id(Sitzung)))
-        d = BuchungDialog(konten, vorlage=vorlage)
-        assert d.rechnungen is None and d.dateien() == []
+        d = BuchungDialog(konten, vorlage=vorlage, vorhandene_rechnungen=["Alt.pdf"])
+        assert d.form.labelForField(d.rechnungen).text() == "Neue Rechnungen:"
+        assert any("Alt.pdf" in w.text() for w in d.findChildren(type(d.hinweis)))
+        d.rechnungen.dateien_dazu([dateien["pdf"]])
+        assert [x.dateiname for x in d.dateien()] == ["Rechnung.pdf"]
 
 
 class TestHauptfenster:
@@ -356,6 +359,28 @@ class TestHauptfenster:
         with Sitzung() as s:
             neu = s.scalars(select(Buchung).where(Buchung.text == "Putzmittel")).one()
             assert [a.dateiname for a in neu.anhaenge] == ["Rechnung.pdf"]
+
+    @pytest.mark.parametrize("betrag, neu_gebucht", [("35,90", False), ("40,00", True)])
+    def test_korrigieren_haengt_rechnung_an(self, fenster, Sitzung, dateien, monkeypatch, betrag, neu_gebucht):
+        """Bestehende Buchung per Doppelklick/Korrigieren um eine Rechnung ergänzen."""
+        with Sitzung.begin() as s:
+            an.anhaengen(s, buchung_id(Sitzung), pdf_datei("Alt.pdf"))
+        alt = buchung_id(Sitzung)
+
+        def ausfuellen(dialog):
+            dialog.betrag.setText(betrag)
+            dialog.rechnungen.dateien_dazu([dateien["pdf"]])
+            dialog._pruefen()
+            return dialog.result()
+
+        monkeypatch.setattr(BuchungDialog, "exec", ausfuellen)
+        fenster.buchungen_tabelle.selectRow(0)
+        fenster.korrigiere_auswahl()
+        with Sitzung() as s:
+            gueltig = s.scalars(select(Buchung).where(Buchung.storno_von_id.is_(None))
+                                .order_by(Buchung.id.desc())).first()
+            assert (gueltig.id != alt) == neu_gebucht
+            assert [a.dateiname for a in gueltig.anhaenge] == ["Alt.pdf", "Rechnung.pdf"]
 
     def test_bueroklammer_in_der_liste(self, fenster, Sitzung):
         with Sitzung.begin() as s:

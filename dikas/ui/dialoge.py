@@ -262,7 +262,13 @@ class KontoDialog(QDialog):
 class BuchungDialog(QDialog):
     """Neue Buchung – oder mit `vorlage` (siehe buchhaltung.eingabe_aus_buchung) eine Korrektur."""
 
-    def __init__(self, konten: list[Konto], parent=None, vorlage: dict | None = None):
+    def __init__(
+        self,
+        konten: list[Konto],
+        parent=None,
+        vorlage: dict | None = None,
+        vorhandene_rechnungen: list[str] | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Buchung korrigieren" if vorlage else "Neue Buchung")
         self.konten = konten
@@ -299,12 +305,16 @@ class BuchungDialog(QDialog):
         self.form.addRow("Betrag (€):", self.betrag)
         self.form.addRow("Buchungstext:", self.text)
         self.form.addRow("Beleg-Nr.:", self.beleg)
-        # Rechnungen gleich mitspeichern (bei Korrekturen über „Rechnungen …“ an der Buchung)
-        self.rechnungen: AnhangAuswahl | None = None
-        if not vorlage:
-            self.rechnungen = AnhangAuswahl(self)
-            self.form.addRow("Rechnungen:", self.rechnungen)
-            self.setAcceptDrops(True)
+        # Rechnungen gleich mitspeichern – bei neuen Buchungen und bei Korrekturen (dann zusätzlich
+        # zu den schon angehängten; entfernen geht über „Rechnungen …“ an der Buchungsliste)
+        if vorhandene_rechnungen:
+            schon = QLabel("\n".join(f"📎 {name}" for name in vorhandene_rechnungen))
+            schon.setObjectName("hinweis")
+            schon.setWordWrap(True)
+            self.form.addRow("Angehängt:", schon)
+        self.rechnungen = AnhangAuswahl(self)
+        self.form.addRow("Neue Rechnungen:" if vorlage else "Rechnungen:", self.rechnungen)
+        self.setAcceptDrops(True)
         self.form.addRow(_knoepfe(self, self._pruefen))
 
         self.art.currentIndexChanged.connect(self._art_geaendert)
@@ -397,16 +407,15 @@ class BuchungDialog(QDialog):
         }
 
     def dateien(self) -> list[Datei]:
-        """Die Rechnungen, die mit der neuen Buchung gespeichert werden sollen."""
-        return list(self.rechnungen.dateien) if self.rechnungen else []
+        """Die Rechnungen, die mit der (neuen bzw. korrigierten) Buchung gespeichert werden sollen."""
+        return list(self.rechnungen.dateien)
 
     def dragEnterEvent(self, ereignis):
-        if self.rechnungen and gezogene_dateien(ereignis):
+        if gezogene_dateien(ereignis):
             ereignis.acceptProposedAction()
 
     def dropEvent(self, ereignis):
-        if self.rechnungen:
-            self.rechnungen.dateien_dazu(gezogene_dateien(ereignis))
+        self.rechnungen.dateien_dazu(gezogene_dateien(ereignis))
 
 
 class BeitragDialog(QDialog):

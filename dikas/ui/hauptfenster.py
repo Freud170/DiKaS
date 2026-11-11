@@ -904,7 +904,9 @@ class Hauptfenster(QMainWindow):
             if buchung is None or buchung.ist_storno or buchung.ist_storniert:
                 QMessageBox.information(
                     self, "Hinweis",
-                    "Stornierte Buchungen und Stornobuchungen können nicht korrigiert werden.",
+                    "Stornierte Buchungen und Stornobuchungen können nicht korrigiert werden.\n"
+                    "Rechnungen lassen sich an stornierte Buchungen trotzdem anhängen: "
+                    "Knopf „Rechnungen“ über der Liste.",
                 )
                 return
             try:
@@ -918,11 +920,19 @@ class Hauptfenster(QMainWindow):
             # Text/Beleg, lehnt `buchung_korrigieren` das für stillgelegte Konten mit Meldung ab.
             vorhanden = {k.id for k in konten}
             konten += [k for k in (buchung.soll_konto, buchung.haben_konto) if k.id not in vorhanden]
-        dialog = BuchungDialog(konten, self, vorlage=vorlage)
+            rechnungen = [a.dateiname for a in buchung.anhaenge]
+        dialog = BuchungDialog(konten, self, vorlage=vorlage, vorhandene_rechnungen=rechnungen)
         if dialog.exec() != BuchungDialog.Accepted:
             return
-        werte = dialog.werte()
-        if self._ausfuehren(lambda s: buchhaltung.buchung_korrigieren(s, buchung_id, **werte)):
+        werte, dateien = dialog.werte(), dialog.dateien()
+
+        def korrigieren(session):
+            # Neue Rechnungen an die gültige Buchung (bei Storno + Neubuchung also an die neue)
+            gueltig = buchhaltung.buchung_korrigieren(session, buchung_id, **werte)
+            for datei in dateien:
+                anhaenge.anhaengen(session, gueltig.id, datei)
+
+        if self._ausfuehren(korrigieren):
             self.statusBar().showMessage("Buchung korrigiert.", 5000)
 
     def storniere_auswahl(self):
