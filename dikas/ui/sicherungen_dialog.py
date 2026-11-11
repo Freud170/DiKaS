@@ -1,5 +1,6 @@
 """Übersicht der automatischen Sicherungen mit Wiederherstellen."""
 
+import sqlite3
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
@@ -105,7 +106,7 @@ class SicherungenDialog(QDialog):
     def jetzt_sichern(self):
         try:
             neu = sicherung.sichern(self.db_pfad)
-        except OSError as fehler:
+        except (OSError, sqlite3.Error) as fehler:
             QMessageBox.warning(self, "Fehler", f"Sicherung fehlgeschlagen:\n{fehler}")
             return
         if neu is None:
@@ -128,8 +129,10 @@ class SicherungenDialog(QDialog):
         self.engine.dispose()  # alle offenen Verbindungen schließen, bevor die Datei ersetzt wird
         try:
             sicherung.wiederherstellen(s, self.db_pfad)
-        except (OSError, ValueError) as fehler:
+        except (OSError, ValueError, sqlite3.Error) as fehler:
+            # sqlite3.Error: z. B. Datei gesperrt (Virenscanner, Synchronisierung) oder Datenträger voll
             QMessageBox.warning(self, "Fehler", f"Wiederherstellen fehlgeschlagen:\n{fehler}")
+            self.laden()
             return
         finally:
             init_db(self.engine)  # ältere Sicherungen auf den aktuellen Datenbank-Stand bringen

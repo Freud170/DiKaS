@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication
 from sqlalchemy.orm import Session, sessionmaker
 
 from dikas import buchhaltung as bh
-from dikas.db.models import KontoTyp, MitgliedStatus as St
+from dikas.db.models import Buchungsart as Art, KontoTyp, MitgliedStatus as St
 from dikas.ui.hauptfenster import (
     BIERSPITZ, KONTEN_SORTIERUNG, KONTEN_SPALTEN, NACHNAME, NAME_ROLLE, SALDO, VORNAME, Hauptfenster,
 )
@@ -246,6 +246,56 @@ def test_suche_zeigt_trefferzahl_und_gilt_im_konto(fenster):
     assert fenster.buchungen_info.text().startswith("0 von 1 Buchungen")
     fenster.buchungssuche.clear()
     assert buchungstexte(fenster) == ["Bierkasse Sommerfest"]
+
+
+def test_suchen_liest_nicht_bei_jedem_tastendruck_aus_der_datenbank(fenster, monkeypatch):
+    """Suche, Filter und Sortierung arbeiten auf den geladenen Daten (bleibt auch nach Jahren flott)."""
+    gelesen = []
+    for name in ("buchungen", "salden", "konten"):
+        original = getattr(bh, name)
+        monkeypatch.setattr(
+            bh, name, lambda *a, _original=original, _name=name, **k: (gelesen.append(_name), _original(*a, **k))[1]
+        )
+    for text in ("g", "gr", "gri", "grill"):
+        fenster.buchungssuche.setText(text)
+    assert buchungstexte(fenster) == ["Auslage Grillfleisch"]
+    fenster.buchungssuche.clear()
+    fenster.suche.setText("zim")
+    assert namen(fenster) == ["Anna Zimmer"]
+    fenster.suche.clear()
+    sortiere(fenster, "Saldo: höchster zuerst")
+    fenster.filter.setCurrentText("Kassen")
+    assert namen(fenster) == ["Getränkekasse"]
+    assert gelesen == []
+
+    # Ein anderes Konto wählen lädt genau dessen Buchungen
+    fenster.filter.setCurrentText("Alle Konten")
+    fenster.konten_tabelle.selectRow(namen(fenster).index("Zoe Adler"))
+    assert gelesen == ["buchungen"]
+    assert buchungstexte(fenster) == ["Bierkasse Sommerfest"]
+
+
+def test_nach_einer_buchung_sind_liste_und_saldo_aktuell(fenster):
+    fenster.konten_tabelle.selectRow(namen(fenster).index("Zoe Adler"))
+    assert "Saldo <b>25,00 €</b>" in fenster.buchungen_info.text()
+    with fenster.Session() as s:
+        zoe_id = _drei(s)[0].id
+    fenster.buchungssuche.setText("spende")
+    assert buchungstexte(fenster) == []
+
+    assert fenster._ausfuehren(lambda s: bh.buchen(s, Art.EINZAHLUNG, zoe_id, 500, "Spende"))
+
+    assert buchungstexte(fenster) == ["Spende"]
+    assert fenster.buchungen_info.text() == "1 von 2 Buchungen · Saldo <b>30,00 €</b>"
+
+
+def test_tausenderpunkt_in_der_betragssuche(verein):
+    tom = verein.mitglied("Tom Becker")
+    gross = verein.einzahlung(tom, "1.000", "Erbschaft")
+    klein = verein.einzahlung(tom, "1", "Pfand")
+    assert gross.betrag_cent == 100000
+    assert bh.buchung_passt(gross, "1.000") and not bh.buchung_passt(klein, "1.000")
+    assert not bh.buchung_passt(gross, "9" * 40)  # kein Absturz bei unsinnig langen Zahlen
 
 
 def test_zahl_findet_nur_ganze_zahlen_im_text(verein):

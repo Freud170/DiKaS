@@ -1,5 +1,6 @@
 """Automatische Sicherung: anlegen, nur bei Änderung, die letzten 10 behalten, wiederherstellen."""
 
+import sqlite3
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -142,6 +143,49 @@ class TestWiederherstellen:
         sicherung.wiederherstellen(aelteste, pfad, T0 + timedelta(days=20))
         assert aelteste.pfad.exists()
 
+    def test_zweimal_wiederherstellen_loescht_die_gewaehlte_sicherung_nicht(self, db):
+        """Früher wurde beim zweiten Wiederherstellen die gewählte (älteste) Sicherung aufgeräumt,
+        bevor sie kopiert war – danach war die Datenbank leer."""
+        pfad, engine = db
+        for i in range(10):
+            mitglied_anlegen(engine, f"M{i}")
+            sicherung.sichern(pfad, T0 + timedelta(days=i))
+        mitglied_anlegen(engine, "Neu")
+        engine.dispose()
+        sicherung.wiederherstellen(sicherung.sicherungen(pfad)[3], pfad, T0 + timedelta(days=20))
+        engine.dispose()
+        aelteste = sicherung.sicherungen(pfad)[-1]
+
+        vorher = sicherung.wiederherstellen(aelteste, pfad, T0 + timedelta(days=21))
+
+        assert namen(engine) == ["M0", "Tom"]  # Stand der ältesten Sicherung, nicht leer
+        assert aelteste.pfad.exists()
+        sicherung.pruefen(aelteste.pfad)
+        vorhanden = sicherung.sicherungen(pfad)
+        assert vorher in vorhanden  # der Stand vor dem Wiederherstellen ist gesichert
+        assert len(vorhanden) == sicherung.BEHALTEN + 1  # aufgeräumt wird trotzdem
+
+    def test_fehlende_quelle_ueberschreibt_das_ziel_nicht(self, db, tmp_path):
+        """sqlite3 würde eine fehlende Quelle als leere Datei anlegen und das Ziel damit ersetzen."""
+        pfad, engine = db
+        engine.dispose()
+        fehlt = tmp_path / "gibtsnicht.db"
+        with pytest.raises(FileNotFoundError):
+            sicherung.kopiere_datenbank(fehlt, pfad)
+        assert not fehlt.exists()
+        assert namen(engine) == ["Tom"]
+
+    def test_aufraeumen_verschont_geschuetzte_sicherung(self, db):
+        pfad, engine = db
+        for i in range(4):
+            mitglied_anlegen(engine, f"M{i}")
+            sicherung.sichern(pfad, T0 + timedelta(days=i))
+        aelteste = sicherung.sicherungen(pfad)[-1]
+        geloescht = sicherung.aufraeumen(pfad, behalten=2, schuetzen=[aelteste.pfad])
+        uebrig = sicherung.sicherungen(pfad)
+        assert len(geloescht) == 2 and len(uebrig) == 2
+        assert aelteste in uebrig and uebrig[0].zeitpunkt == T0 + timedelta(days=3)
+
     def test_kaputte_sicherung_wird_abgelehnt(self, db):
         pfad, engine = db
         ordner = sicherung.sicherungs_ordner(pfad)
@@ -237,6 +281,26 @@ class TestDialog:
         assert namen(engine) == ["Tom"]  # Engine funktioniert nach dem Austausch weiter
         assert d.tabelle.rowCount() == 2  # plus Sicherung des Stands vor dem Wiederherstellen
         assert "wiederhergestellt" in meldungen[-1]
+
+    def test_datenbankfehler_wird_gemeldet(self, app, db, meldungen, monkeypatch):
+        """Gesperrte Datei, voller Datenträger o. ä.: Meldung statt stillem Absturz."""
+        pfad, engine = db
+        sicherung.sichern(pfad, T0)
+        mitglied_anlegen(engine, "Anna")
+
+        def gesperrt(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        d = SicherungenDialog(engine, pfad)
+        monkeypatch.setattr(sicherung, "wiederherstellen", gesperrt)
+        d.wiederherstellen()
+        assert "Wiederherstellen fehlgeschlagen" in meldungen[-1] and "locked" in meldungen[-1]
+        assert not d.wiederhergestellt
+        assert namen(engine) == ["Anna", "Tom"]  # Engine funktioniert weiter, Daten unverändert
+
+        monkeypatch.setattr(sicherung, "sichern", gesperrt)
+        d.jetzt_sichern()
+        assert "Sicherung fehlgeschlagen" in meldungen[-1]
 
     def test_wiederherstellen_abgebrochen(self, app, db, monkeypatch):
         pfad, engine = db

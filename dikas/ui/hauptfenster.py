@@ -121,6 +121,10 @@ class Hauptfenster(QMainWindow):
         self.Session = session_factory
         self.db_pfad = db_pfad
         self._vor_loeschen_gesichert = False  # siehe _sichern_vor_loeschen
+        # Zuletzt geladener Stand (siehe aktualisieren): Suche/Filter arbeiten darauf, ohne neu zu lesen
+        self._konten: list[Konto] = []
+        self._salden: dict[int, int] = {}
+        self._buchungen: tuple[int | None, list[Buchung]] | None = None  # (Konto-ID, Buchungen)
         self.setWindowTitle(f"DiKaS {__version__} – {db_pfad}")
         self.resize(1320, 780)
 
@@ -141,14 +145,14 @@ class Hauptfenster(QMainWindow):
         self.suche.setPlaceholderText("Name, Bierspitz oder E-Mail suchen …")
         self.suche.setClearButtonEnabled(True)
         self.suche.addAction(stil.symbol("EditFind"), QLineEdit.LeadingPosition)
-        self.suche.textChanged.connect(self.aktualisieren)
+        self.suche.textChanged.connect(self._zeige_konten)
         self.filter = QComboBox()
         self.filter.addItems(KONTEN_FILTER)
-        self.filter.currentIndexChanged.connect(self.aktualisieren)
+        self.filter.currentIndexChanged.connect(self._zeige_konten)
         self.sortierung = QComboBox()
         self.sortierung.addItems(KONTEN_SORTIERUNG)
         self.sortierung.setToolTip("Reihenfolge der Konten (auch per Klick auf die Spaltenüberschrift)")
-        self.sortierung.currentIndexChanged.connect(self.aktualisieren)
+        self.sortierung.currentIndexChanged.connect(self._zeige_konten)
         self.konten_tabelle = self._neue_tabelle(KONTEN_SPALTEN, rechts=[SALDO])
         self.konten_breiten = Spaltenbreiten(self.konten_tabelle)
         kopf = self.konten_tabelle.horizontalHeader()
@@ -335,15 +339,40 @@ class Hauptfenster(QMainWindow):
     # --- Daten laden ------------------------------------------------------
 
     def aktualisieren(self):
+        """Alles neu aus der Datenbank laden und anzeigen (nach jeder Änderung und per F5)."""
+        with self.Session() as session:
+            self._konten = buchhaltung.konten(session)
+            self._salden = buchhaltung.salden(session)
+            abstimmung = buchhaltung.abstimmung(session, self._salden)
+        self._buchungen = None  # Buchungsliste beim nächsten Anzeigen neu laden
+
+        self._aktualisiere_kennzahlen(self._konten, self._salden)
+        if abstimmung.stimmt:
+            self.abstimmung.setObjectName("abstimmungOk")
+            self.abstimmung.setText("✔ Kasse stimmt: KW = Privatkonten + Kassen")
+        else:
+            self.abstimmung.setObjectName("abstimmungFehler")
+            self.abstimmung.setText(
+                f"✖ KW {cent_zu_text(abstimmung.kw_cent)} ≠ "
+                f"Privatkonten + Kassen {cent_zu_text(abstimmung.verteilt_cent)}"
+            )
+        # Objektname geändert -> Stil neu anwenden
+        self.abstimmung.style().unpolish(self.abstimmung)
+        self.abstimmung.style().polish(self.abstimmung)
+        self._zeige_konten()
+
+    def _zeige_konten(self, *_):
+        """Kontenliste aus den geladenen Daten neu aufbauen.
+
+        Suche, Filter und Sortierung ändern nichts an den Daten – dafür muss die Datenbank
+        nicht bei jedem Tastendruck neu gelesen werden.
+        """
         gewaehlt = self._gewaehltes_konto_id()
         passt = KONTEN_FILTER[self.filter.currentText()]
         suchtext = self.suche.text().strip().lower()
         self.konten_tabelle.blockSignals(True)
         self.konten_tabelle.clearSelection()
-        with self.Session() as session:
-            alle = buchhaltung.konten(session)
-            salden = buchhaltung.salden(session)
-            abstimmung = buchhaltung.abstimmung(session)
+        alle, salden = self._konten, self._salden
         sortierung = KONTEN_SORTIERUNG[self.sortierung.currentText()]
         konten = sortiere_konten(
             [k for k in alle if passt(k) and suchtext in f"{k.name} {k.bierspitz} {k.email}".lower()],
@@ -382,20 +411,6 @@ class Hauptfenster(QMainWindow):
         self.konten_tabelle.blockSignals(False)
         self.konten_breiten.anpassen()
         self.konten_info.setText(f"{len(konten)} von {len(alle)}")
-
-        self._aktualisiere_kennzahlen(alle, salden)
-        if abstimmung.stimmt:
-            self.abstimmung.setObjectName("abstimmungOk")
-            self.abstimmung.setText("✔ Kasse stimmt: KW = Privatkonten + Kassen")
-        else:
-            self.abstimmung.setObjectName("abstimmungFehler")
-            self.abstimmung.setText(
-                f"✖ KW {cent_zu_text(abstimmung.kw_cent)} ≠ "
-                f"Privatkonten + Kassen {cent_zu_text(abstimmung.verteilt_cent)}"
-            )
-        # Objektname geändert -> Stil neu anwenden
-        self.abstimmung.style().unpolish(self.abstimmung)
-        self.abstimmung.style().polish(self.abstimmung)
         self.lade_buchungen()
 
     def _aktualisiere_kennzahlen(self, konten: list[Konto], salden: dict[int, int]):
@@ -500,40 +515,50 @@ class Hauptfenster(QMainWindow):
             return ALLE_BUCHUNGEN
         return self.konten_tabelle.item(zeilen[0].row(), 0).data(Qt.UserRole)
 
-    def lade_buchungen(self):
+    def lade_buchungen(self, *_):
+        """Buchungen des gewählten Kontos anzeigen, gefiltert nach dem Suchtext.
+
+        Aus der Datenbank wird nur gelesen, wenn ein anderes Konto gewählt wurde oder sich die
+        Daten geändert haben (`aktualisieren`). Beim Tippen in der Suche wird die geladene
+        Liste gefiltert.
+        """
         konto_id = self._gewaehltes_konto_id()
-        with self.Session() as session:
-            alle = buchhaltung.buchungen(session, konto_id)
-            suchtext = self.buchungssuche.text()
-            liste = [b for b in alle if buchhaltung.buchung_passt(b, suchtext)]
-            anzahl = f"{len(liste)} von {len(alle)} Buchungen" if suchtext.strip() else f"{len(alle)} Buchungen"
-            konto = session.get(Konto, konto_id) if konto_id is not ALLE_BUCHUNGEN else None
-            if konto:
-                self.buchungen_titel.setText(f"Buchungen – {konto.name}")
-                saldo = buchhaltung.saldo(session, konto.id)
-                self.buchungen_info.setText(f"{anzahl} · Saldo <b>{cent_zu_text(saldo)}</b>")
-            else:
-                self.buchungen_titel.setText("Alle Buchungen")
-                self.buchungen_info.setText(anzahl)
-            self.buchungen_tabelle.setRowCount(len(liste))
-            for zeile, b in enumerate(liste):
-                # Aus Sicht des gewählten Kontos: Wirkung auf dessen Saldo
-                betrag = b.wirkung_auf(konto) if konto else b.betrag_cent
-                status = "storniert" if b.ist_storniert else ""
-                werte = [
-                    _zelle(b.datum.strftime("%d.%m.%Y"), daten=b.id),
-                    _zelle(b.art.anzeige),
-                    _zelle(b.beleg),
-                    _zelle(b.text),
-                    _zelle(b.soll_konto.name),
-                    _zelle(b.haben_konto.name),
-                    _betrag_zelle(betrag),
-                    _zelle(status),
-                ]
-                for spalte, item in enumerate(werte):
-                    if b.ist_storniert or b.ist_storno:
-                        item.setForeground(GRAU)
-                    self.buchungen_tabelle.setItem(zeile, spalte, item)
+        if self._buchungen is None or self._buchungen[0] != konto_id:
+            with self.Session() as session:
+                # Die Buchungen bringen ihre Konten und ihr Storno mit (joinedload) und
+                # bleiben deshalb auch nach dem Schließen der Session vollständig lesbar
+                self._buchungen = (konto_id, buchhaltung.buchungen(session, konto_id))
+        alle = self._buchungen[1]
+        konto = next((k for k in self._konten if k.id == konto_id), None)
+        suchtext = self.buchungssuche.text()
+        liste = [b for b in alle if buchhaltung.buchung_passt(b, suchtext)]
+        anzahl = f"{len(liste)} von {len(alle)} Buchungen" if suchtext.strip() else f"{len(alle)} Buchungen"
+        if konto:
+            self.buchungen_titel.setText(f"Buchungen – {konto.name}")
+            saldo = self._salden.get(konto.id, 0)
+            self.buchungen_info.setText(f"{anzahl} · Saldo <b>{cent_zu_text(saldo)}</b>")
+        else:
+            self.buchungen_titel.setText("Alle Buchungen")
+            self.buchungen_info.setText(anzahl)
+        self.buchungen_tabelle.setRowCount(len(liste))
+        for zeile, b in enumerate(liste):
+            # Aus Sicht des gewählten Kontos: Wirkung auf dessen Saldo
+            betrag = b.wirkung_auf(konto) if konto else b.betrag_cent
+            status = "storniert" if b.ist_storniert else ""
+            werte = [
+                _zelle(b.datum.strftime("%d.%m.%Y"), daten=b.id),
+                _zelle(b.art.anzeige),
+                _zelle(b.beleg),
+                _zelle(b.text),
+                _zelle(b.soll_konto.name),
+                _zelle(b.haben_konto.name),
+                _betrag_zelle(betrag),
+                _zelle(status),
+            ]
+            for spalte, item in enumerate(werte):
+                if b.ist_storniert or b.ist_storno:
+                    item.setForeground(GRAU)
+                self.buchungen_tabelle.setItem(zeile, spalte, item)
         self.buchungen_breiten.anpassen()
 
     # --- Aktionen ---------------------------------------------------------
@@ -560,7 +585,7 @@ class Hauptfenster(QMainWindow):
     # --- Update ---------------------------------------------------------------
 
     # Stiller Installer-Aufruf: ersetzt die alte Version und startet DiKaS danach neu
-    UPDATE_PARAMETER = ["/SILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/NORESTART", "/SP-"]
+    UPDATE_PARAMETER = ["/SILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/NORESTART", "/SP-"]  # noqa: RUF012
 
     def update_installieren(self):
         if not getattr(sys, "frozen", False):
@@ -861,6 +886,11 @@ class Hauptfenster(QMainWindow):
                 QMessageBox.information(self, "Hinweis", str(fehler))
                 return
             konten = buchhaltung.konten(session, nur_aktive=True)
+            # Die Konten der Buchung auch anbieten, wenn sie inzwischen deaktiviert sind – sonst
+            # ließe sich nicht einmal ein Tippfehler im Text korrigieren. Ändert sich mehr als
+            # Text/Beleg, lehnt `buchung_korrigieren` das für stillgelegte Konten mit Meldung ab.
+            vorhanden = {k.id for k in konten}
+            konten += [k for k in (buchung.soll_konto, buchung.haben_konto) if k.id not in vorhanden]
         dialog = BuchungDialog(konten, self, vorlage=vorlage)
         if dialog.exec() != BuchungDialog.Accepted:
             return

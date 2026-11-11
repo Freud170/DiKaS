@@ -10,11 +10,11 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import date
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from dikas.db.database import teile_namen
-from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus, Statuswechsel
+from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, Mailversand, MitgliedStatus, Statuswechsel
 from dikas.geld import cent_zu_text, text_zu_cent
 
 
@@ -227,7 +227,7 @@ def konto_bearbeiten(
         statusverlauf_setzen(session, konto.id, statusverlauf)
     else:
         _pruefe_status(konto.typ, status)
-        if status != konto.status:
+        if status is not None and status != konto.status:
             status_wechseln(session, konto.id, status, date.today())
     konto.bemerkung = bemerkung.strip()
     konto.aktiv = aktiv
@@ -339,6 +339,9 @@ def konto_loeschen(session: Session, konto_id: int) -> bool:
             f"(aktuell {cent_zu_text(stand)})."
         )
     if not hat_buchungen(session, konto.id):
+        # Das Versandprotokoll verweist auf das Konto und muss mit weg, sonst verweigert die
+        # Datenbank das Löschen (z. B. neues Mitglied, das schon einen Kontoauszug bekommen hat)
+        session.execute(delete(Mailversand).where(Mailversand.konto_id == konto.id))
         session.delete(konto)
         session.flush()
         return True
@@ -870,9 +873,13 @@ class Abstimmung:
         return self.kw_cent == self.verteilt_cent
 
 
-def abstimmung(session: Session) -> Abstimmung:
-    """Kontrolle: Summe aller Geldorte (KW) muss der Summe aller Privatkonten und Kassen entsprechen."""
-    werte = salden(session)
+def abstimmung(session: Session, werte: dict[int, int] | None = None) -> Abstimmung:
+    """Kontrolle: Summe aller Geldorte (KW) muss der Summe aller Privatkonten und Kassen entsprechen.
+
+    `werte`: bereits berechnete Salden (siehe `salden`), damit nicht doppelt summiert wird.
+    """
+    if werte is None:
+        werte = salden(session)
     kw_ids = {g.id for g in geldorte(session)}
     return Abstimmung(
         sum(v for k, v in werte.items() if k in kw_ids),

@@ -7,6 +7,7 @@ Datenbank seit der letzten Sicherung unverändert, wird keine neue angelegt.
 
 import hashlib
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -57,14 +58,23 @@ def _pruefsumme(pfad: Path) -> str:
 
 def kopiere_datenbank(quelle: Path, ziel: Path) -> None:
     """Konsistente Kopie über die SQLite-Backup-Funktion (auch wenn die DB gerade offen ist)."""
+    # sqlite3.connect würde eine fehlende Quelle stillschweigend als leere Datei anlegen –
+    # und das Ziel dann mit einer leeren Datenbank überschreiben
+    if not Path(quelle).is_file():
+        raise FileNotFoundError(f"{Path(quelle).name} nicht gefunden.")
     with sqlite3.connect(quelle) as von, sqlite3.connect(ziel) as nach:
         von.backup(nach)
     von.close()
     nach.close()
 
 
-def sichern(db_pfad: Path, jetzt: datetime | None = None, behalten: int = BEHALTEN) -> Sicherung | None:
-    """Sichert die Datenbank. Rückgabe None, wenn es keine DB gibt oder sich nichts geändert hat."""
+def sichern(
+    db_pfad: Path, jetzt: datetime | None = None, behalten: int | None = BEHALTEN
+) -> Sicherung | None:
+    """Sichert die Datenbank. Rückgabe None, wenn es keine DB gibt oder sich nichts geändert hat.
+
+    Mit `behalten=None` werden keine älteren Sicherungen gelöscht.
+    """
     db_pfad = Path(db_pfad)
     if not db_pfad.exists():
         return None
@@ -84,13 +94,21 @@ def sichern(db_pfad: Path, jetzt: datetime | None = None, behalten: int = BEHALT
         ziel.unlink()  # unverändert seit der letzten Sicherung
         return None
 
-    aufraeumen(db_pfad, behalten)
+    if behalten is not None:
+        aufraeumen(db_pfad, behalten)
     return Sicherung(ziel, zeit)
 
 
-def aufraeumen(db_pfad: Path, behalten: int = BEHALTEN) -> list[Path]:
-    """Löscht alle Sicherungen bis auf die neuesten `behalten`. Rückgabe: gelöschte Dateien."""
-    zu_alt = [s.pfad for s in sicherungen(db_pfad)[behalten:]]
+def aufraeumen(db_pfad: Path, behalten: int = BEHALTEN, schuetzen: Collection[Path] = ()) -> list[Path]:
+    """Löscht die ältesten Sicherungen, bis höchstens `behalten` übrig sind. Rückgabe: gelöschte Dateien.
+
+    Dateien in `schuetzen` bleiben auf jeden Fall erhalten; dafür muss dann die nächstältere weichen.
+    """
+    geschuetzt = {Path(p) for p in schuetzen}
+    alle = sicherungen(db_pfad)  # neueste zuerst
+    zu_viele = max(len(alle) - behalten, 0)
+    loeschbar = [s.pfad for s in reversed(alle) if s.pfad not in geschuetzt]  # älteste zuerst
+    zu_alt = loeschbar[:zu_viele]
     for pfad in zu_alt:
         pfad.unlink(missing_ok=True)
     return zu_alt
@@ -105,9 +123,11 @@ def wiederherstellen(sicherung: Sicherung, db_pfad: Path, jetzt: datetime | None
     if not sicherung.pfad.exists():
         raise FileNotFoundError(f"Sicherung {sicherung.pfad.name} nicht gefunden.")
     pruefen(sicherung.pfad)
-    # Nicht aufräumen lassen: die gewählte Sicherung könnte sonst als älteste gelöscht werden
-    vorher = sichern(db_pfad, jetzt, behalten=BEHALTEN + 1)
+    # Erst nach dem Zurückspielen aufräumen und die gewählte Sicherung dabei nie löschen:
+    # Sonst könnte sie als älteste verschwinden, bevor sie kopiert ist
+    vorher = sichern(db_pfad, jetzt, behalten=None)
     kopiere_datenbank(sicherung.pfad, Path(db_pfad))
+    aufraeumen(db_pfad, BEHALTEN + 1, schuetzen=[sicherung.pfad])
     return vorher
 
 

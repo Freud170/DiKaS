@@ -3,7 +3,6 @@
 from datetime import date
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -218,6 +217,58 @@ class TestOberflaeche:
         fenster.buchungen_tabelle.selectRow(0)
         fenster.korrigiere_auswahl()
         assert "nicht korrigiert" in meldungen[-1]
+
+    def _deaktiviere_tom(self, engine, fenster):
+        with Session(engine) as s, s.begin():
+            tom = next(k for k in bh.konten(s) if k.name == "Tom Becker")
+            bh.konto_bearbeiten(s, tom.id, tom.name, tom.status, "ausgetreten", aktiv=False)
+        fenster.aktualisieren()
+
+    def test_text_korrigieren_bei_deaktiviertem_konto(self, fenster, engine, monkeypatch):
+        """Früher bot der Dialog nur aktive Konten an – beim ausgetretenen Mitglied blieb das
+        Kontofeld leer und nicht einmal ein Tippfehler ließ sich korrigieren."""
+        self._deaktiviere_tom(engine, fenster)
+
+        def nur_text(dialog):
+            assert dialog.konto.currentText() == "Tom Becker (Aktiver, deaktiviert)"
+            dialog.text.setText("Überweisung März")
+            dialog._pruefen()
+            return dialog.result()
+        monkeypatch.setattr(BuchungDialog, "exec", nur_text)
+        fenster.buchungen_tabelle.selectRow(0)
+        fenster.korrigiere_auswahl()
+        t = fenster.buchungen_tabelle
+        assert [t.item(r, 3).text() for r in range(t.rowCount())] == ["Überweisung März"]  # kein Storno
+
+    def test_betrag_korrigieren_bei_deaktiviertem_konto_wird_abgelehnt(self, fenster, engine, monkeypatch):
+        self._deaktiviere_tom(engine, fenster)
+        meldungen = []
+        monkeypatch.setattr(QMessageBox, "warning", lambda *a: meldungen.append(a[2]))
+
+        def betrag(dialog):
+            dialog.betrag.setText("10")
+            dialog._pruefen()
+            return dialog.result()
+        monkeypatch.setattr(BuchungDialog, "exec", betrag)
+        fenster.buchungen_tabelle.selectRow(0)
+        fenster.korrigiere_auswahl()
+        assert "deaktiviert" in meldungen[-1]
+        assert fenster.buchungen_tabelle.rowCount() == 1  # nichts storniert, nichts neu gebucht
+
+    def test_stillgelegter_geldort_bleibt_bei_korrektur_waehlbar(self, app, verein, session):
+        tom = verein.mitglied("Tom")
+        alt = verein.kw
+        b = verein.einzahlung(tom, "10", "Bar", D(2026, 3, 1))
+        bank = verein.geldort("Bankkonto")
+        verein.geldtransfer(alt, bank, "10")
+        bh.konto_bearbeiten(session, alt.id, alt.name, None, "", aktiv=False)
+
+        d = BuchungDialog([*bh.konten(session, True), alt], vorlage=bh.eingabe_aus_buchung(b))
+
+        assert d.form.isRowVisible(d.gegen)  # sonst gäbe es keinen Weg, einen anderen Geldort zu wählen
+        assert d.gegen.currentText() == "KW (Geldort, deaktiviert)"
+        d.art.setCurrentIndex(d.art.findData(Art.AUSZAHLUNG))
+        assert d.gegen.currentData() == bank.id  # vorausgewählt wird nur ein aktiver Geldort
 
     def test_stornieren_nicht_mehr_in_werkzeugleiste(self, fenster):
         from PySide6.QtWidgets import QToolBar

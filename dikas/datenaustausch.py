@@ -6,6 +6,7 @@ Damit beim Hin- und Herkopieren nichts verloren geht, merkt sich jede Datenbank
 Daraus ergeben sich die Warnungen beim Import (ältere Datei, ungesicherte Änderungen hier).
 """
 
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -87,10 +88,20 @@ def exportieren(db_pfad: Path, ziel: Path) -> Path:
     db_pfad, ziel = Path(db_pfad), Path(ziel)
     if ziel.resolve() == db_pfad.resolve():
         raise ValueError("Bitte einen anderen Speicherort als die laufende Datenbank wählen.")
-    _austausch_merken(db_pfad)
     ziel.parent.mkdir(parents=True, exist_ok=True)
-    ziel.unlink(missing_ok=True)
-    sicherung.kopiere_datenbank(db_pfad, ziel)
+    # Erst in eine Hilfsdatei schreiben: Scheitert der Export (Stick voll, schreibgeschützt,
+    # abgezogen), bleibt eine frühere Exportdatei erhalten und der eigene Stand gilt weiter
+    # als „noch nicht ausgetauscht“ – sonst fehlte später die Warnung beim Import.
+    entwurf = ziel.with_name(ziel.name + ".teil")
+    try:
+        entwurf.unlink(missing_ok=True)
+        sicherung.kopiere_datenbank(db_pfad, entwurf)
+        _austausch_merken(entwurf)
+        os.replace(entwurf, ziel)
+    except BaseException:
+        entwurf.unlink(missing_ok=True)
+        raise
+    _austausch_merken(db_pfad)
     return ziel
 
 

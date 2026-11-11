@@ -320,9 +320,14 @@ class BuchungDialog(QDialog):
         for konto in self.konten:
             if konto.typ in typen:
                 zusatz = konto.status.anzeige if konto.status else konto.typ.anzeige
+                # Nur bei Korrekturen dabei: Konten der Buchung, die inzwischen stillgelegt sind
+                if konto.geloescht:
+                    zusatz += ", gelöscht"
+                elif not konto.aktiv:
+                    zusatz += ", deaktiviert"
                 box.addItem(f"{konto.name} ({zusatz})", konto.id)
-        # Vorauswahl bei Geldorten: der Standard-Geldort (ältester), wie in `buchhaltung.kw_konto`
-        geldorte = [k.id for k in self.konten if k.typ == KontoTyp.KW and k.typ in typen]
+        # Vorauswahl bei Geldorten: der Standard-Geldort (ältester aktiver), wie in `buchhaltung.kw_konto`
+        geldorte = [k.id for k in self.konten if k.typ == KontoTyp.KW and k.typ in typen and k.aktiv]
         if geldorte:
             box.setCurrentIndex(box.findData(min(geldorte)))
 

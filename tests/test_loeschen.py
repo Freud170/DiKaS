@@ -1,11 +1,14 @@
 """Privatkonten löschen (nur bei Saldo 0) und wiederherstellen."""
 
+from datetime import date
+
 import pytest
 from PySide6.QtWidgets import QApplication, QMessageBox
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from dikas import buchhaltung as bh
-from dikas.db.models import Buchungsart as Art, Konto, KontoTyp, MitgliedStatus as St
+from dikas.db.models import Buchungsart as Art, Konto, KontoTyp, Mailversand, MitgliedStatus as St
 from dikas.ui.hauptfenster import NAME_ROLLE, Hauptfenster
 
 from conftest import ct
@@ -18,6 +21,29 @@ class TestLoeschen:
         assert bh.konto_loeschen(session, tom_id) is True
         assert session.get(Konto, tom_id) is None
         verein.mitglied("Tom")  # Name ist wieder frei
+
+    def test_konto_mit_versandprotokoll_wird_entfernt(self, verein, session):
+        """Neues Mitglied ohne Buchungen, das schon einen Kontoauszug („Saldo 0“) bekommen hat:
+        Das Protokoll verweist auf das Konto und muss mit gelöscht werden."""
+        tom, anna = verein.mitglied("Tom"), verein.mitglied("Anna")
+        for konto in (tom, anna):
+            session.add(Mailversand(konto_id=konto.id, stichtag=date(2026, 12, 31), saldo_cent=0,
+                                    empfaenger="x@example.org", erfolgreich=True))
+        session.flush()
+        tom_id = tom.id
+        assert bh.konto_loeschen(session, tom_id) is True
+        session.flush()
+        assert session.get(Konto, tom_id) is None
+        assert [v.konto_id for v in session.scalars(select(Mailversand))] == [anna.id]
+
+    def test_archiviertes_konto_behaelt_versandprotokoll(self, verein, session):
+        tom = verein.mitglied("Tom")
+        verein.einzahlung(tom, "5")
+        verein.auszahlung(tom, "5")
+        session.add(Mailversand(konto_id=tom.id, stichtag=date(2026, 12, 31), saldo_cent=0,
+                                empfaenger="tom@example.org", erfolgreich=True))
+        assert bh.konto_loeschen(session, tom.id) is False
+        assert len(session.scalars(select(Mailversand)).all()) == 1
 
     def test_konto_mit_buchungen_und_saldo_null_wird_archiviert(self, verein, session):
         kasse = verein.kasse("Beitragskasse")

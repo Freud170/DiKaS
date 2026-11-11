@@ -44,13 +44,28 @@ def test_cent_zu_text_ohne_waehrung():
         ("1 000,00", 100000),
         ("-5,00", -500),
         ("0", 0),
+        # Tausenderpunkte ohne Komma: so zeigt DiKaS Beträge selbst an ("1.000,00 €")
+        ("1.000", 100000),
+        ("2.500 €", 250000),
+        ("12.345", 1234500),
+        ("1.234.567", 123456700),
+        ("-1.000", -100000),
+        # Kein Tausendermuster: Punkt bleibt Dezimalpunkt
+        ("1.5", 150),
+        ("0.50", 50),
+        ("1234.56", 123456),
     ],
 )
 def test_text_zu_cent(text, cent):
     assert text_zu_cent(text) == cent
 
 
-@pytest.mark.parametrize("text", ["", " ", "abc", "1,234", "12,5,0", "12,345", "€", "1e3,0", "zwölf"])
+@pytest.mark.parametrize("text", [
+    "", " ", "abc", "1,234", "12,5,0", "12,345", "€", "1e3,0", "zwölf",
+    "1.2345", "12.5.0", "1.00.000",
+    # Für Decimal wären das Zahlen – als Betrag sind sie Unsinn und dürfen nur ValueError auslösen
+    "Infinity", "-inf", "NaN", "1e30", "1E5", "9" * 40, "10000000000",
+])
 def test_text_zu_cent_ungueltig(text):
     with pytest.raises(ValueError):
         text_zu_cent(text)

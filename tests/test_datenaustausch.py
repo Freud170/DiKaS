@@ -160,6 +160,41 @@ class TestExportImport:
         da.importieren(datei, neu)
         assert da.datenstand(neu).mitglieder == 1
 
+    def test_fehlgeschlagener_export_gilt_nicht_als_austausch(self, pcs, tmp_path, monkeypatch):
+        """Stick voll oder abgezogen: Der eigene Stand bleibt „noch nicht ausgetauscht“ (sonst fehlte
+        später die Warnung beim Import) und eine frühere Exportdatei bleibt erhalten."""
+        a, _ = pcs
+        a.mitglied("Tom")
+        ziel = tmp_path / "stick" / "x.db"
+        da.exportieren(a.db, ziel)
+        alter_export = ziel.read_bytes()
+        warte_sekunde()
+        a.mitglied("Anna")
+        assert da.datenstand(a.db).ungesicherte_aenderungen
+
+        def stick_voll(*_args):
+            raise OSError("Datenträger voll")
+
+        monkeypatch.setattr(sicherung, "kopiere_datenbank", stick_voll)
+        with pytest.raises(OSError, match="voll"):
+            da.exportieren(a.db, ziel)
+
+        assert da.datenstand(a.db).ungesicherte_aenderungen
+        assert ziel.read_bytes() == alter_export
+        assert list(ziel.parent.iterdir()) == [ziel]  # keine halbfertige Hilfsdatei
+
+    def test_exportdatei_ersetzt_fruehere_und_gilt_als_ausgetauscht(self, pcs, tmp_path):
+        a, _ = pcs
+        ziel = tmp_path / "x.db"
+        da.exportieren(a.db, ziel)
+        warte_sekunde()
+        a.mitglied("Tom")
+        da.exportieren(a.db, ziel)
+        stand = da.datenstand(ziel)
+        assert stand.mitglieder == 1 and not stand.ungesicherte_aenderungen
+        assert not da.datenstand(a.db).ungesicherte_aenderungen
+        assert list(tmp_path.glob("x.db*")) == [ziel]
+
     def test_export_nicht_auf_sich_selbst(self, pcs):
         a, _ = pcs
         with pytest.raises(ValueError):
