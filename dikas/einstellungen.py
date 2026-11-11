@@ -4,7 +4,9 @@ Gespeichert als Schlüssel/Wert in der Tabelle `einstellungen`. Passwörter werd
 NICHT gespeichert – sie werden beim Versand abgefragt.
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass, fields, replace
+from string import Formatter
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -44,7 +46,10 @@ ANBIETER = [
     Anbieter("iCloud", "smtp.mail.me.com", 587, STARTTLS,
              "iCloud braucht ein app-spezifisches Passwort (appleid.apple.com)."),
     Anbieter("IONOS", "smtp.ionos.de", 587, STARTTLS),
-    Anbieter("Strato", "smtp.strato.de", 465, SSL),
+    Anbieter("Strato", "smtp.strato.de", 465, SSL,
+             "Bei Strato ist der Benutzername die vollständige E-Mail-Adresse des Postfachs. "
+             "Die Absender-E-Mail sollte dieselbe Adresse sein, sonst stellt Strato die Mail "
+             "unter Umständen nicht zu."),
     Anbieter(EIGENER_SERVER, "", 587, STARTTLS,
              "Serverdaten stehen meist in der Hilfe deines Mail-Anbieters unter „SMTP“."),
 ]
@@ -171,12 +176,27 @@ def speichern(session: Session, einstellungen: Einstellungen) -> None:
     session.flush()
 
 
-def pruefe_vorlage(vorlage: str) -> str | None:
-    """Fehlermeldung, wenn die Vorlage unbekannte Platzhalter oder kaputte Klammern enthält."""
+def pruefe_vorlage(vorlage: str, gesperrt: Collection[str] = ()) -> str | None:
+    """Fehlermeldung, wenn die Vorlage unbekannte Platzhalter oder kaputte Klammern enthält.
+
+    `gesperrt`: Platzhalter, die an dieser Stelle nicht erlaubt sind (der Verwendungszweck
+    kann sich z. B. nicht selbst enthalten).
+    """
+    klammern = "Geschweifte Klammern { } sind nur für Platzhalter erlaubt."
     try:
-        vorlage.format_map({name: "" for name in PLATZHALTER})
-    except KeyError as fehler:
-        return f"Unbekannter Platzhalter {{{fehler.args[0]}}}"
-    except (ValueError, IndexError):
-        return "Geschweifte Klammern { } sind nur für Platzhalter erlaubt."
+        felder = [feld for _, feld, _, _ in Formatter().parse(vorlage) if feld is not None]
+    except ValueError:
+        return klammern
+    for feld in felder:
+        if feld in gesperrt:
+            return f"Der Platzhalter {{{feld}}} kann hier nicht verwendet werden."
+        if not feld or feld.isdigit():
+            return klammern
+        if feld not in PLATZHALTER:
+            # Auch Zusätze wie {name.x} oder {name[0]} sind keine bekannten Platzhalter
+            return f"Unbekannter Platzhalter {{{feld}}}"
+    try:
+        vorlage.format_map(dict.fromkeys(PLATZHALTER, ""))
+    except (ValueError, LookupError, AttributeError, TypeError):
+        return klammern
     return None

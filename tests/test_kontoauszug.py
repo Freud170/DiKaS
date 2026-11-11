@@ -3,10 +3,9 @@
 import smtplib
 import socket
 import socketserver
-import ssl
 import threading
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from email import message_from_bytes, policy
 
 import pytest
@@ -18,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from dikas import buchhaltung as bh
 from dikas import einstellungen as es
 from dikas import kontoauszug as ka
-from dikas.db.models import KontoTyp, Mailversand, MitgliedStatus as St
+from dikas.db.models import Mailversand, MitgliedStatus as St
 from dikas.ui.einstellungen_dialog import EinstellungenDialog
 from dikas.ui.versand_dialog import SPALTE_SENDEN, VersandDialog
 
@@ -171,9 +170,22 @@ class TestEinstellungen:
         ("Hallo {vorname} {nachname}", True),
         ("Kaputt {", False),
         ("Kaputt }", False),
+        ("Stand {saldo:>12}", True),  # Formatangaben sind erlaubt
+        ("Stand {saldo:Q}", False),
+        ("Hallo {}", False),
+        ("Hallo {0}", False),
+        # Zusätze am Platzhalter: früher ein Absturz bzw. Unsinn in der Mail
+        ("Hallo {name.foo}", False),
+        ("Hallo {name.upper}", False),
+        ("Hallo {name[0]}", False),
     ])
     def test_vorlage_pruefen(self, vorlage, ok):
         assert (es.pruefe_vorlage(vorlage) is None) == ok
+
+    def test_gesperrter_platzhalter(self):
+        assert es.pruefe_vorlage("Zweck {verwendungszweck}") is None
+        meldung = es.pruefe_vorlage("Zweck {verwendungszweck}", gesperrt=("verwendungszweck",))
+        assert "{verwendungszweck}" in meldung and "nicht verwendet" in meldung
 
     def test_alle_standardtexte_gueltig(self):
         e = es.Einstellungen()
@@ -225,11 +237,19 @@ class TestAuszug:
         assert a.text == "Zahl 1,00 €, Tommy!"
         assert ka.platzhalter(mitglieder["schulden"], -100, STICHTAG, e)["verwendungszweck"] == "Tommy/Tom Becker"
 
+    def test_verwendungszweck_der_sich_selbst_enthaelt_stuerzt_nicht_ab(self, mitglieder):
+        """Stand so in älteren Einstellungen: Der Kontoauszüge-Dialog ließ sich nicht mehr öffnen."""
+        e = replace(EINST, verwendungszweck="Konto {name} {verwendungszweck}")
+        a = ka.erstelle_auszug(mitglieder["schulden"], -100, STICHTAG, e)
+        assert "Verwendungszweck: Konto Tom Becker \n" in a.text
+
     def test_als_email(self, mitglieder):
         n = ka.als_email(self._auszug(mitglieder["schulden"], -100), EINST)
         assert n["To"] == "schulden@example.org"
         assert "Max (Kassenwart)" in n["From"] and "kassenwart@example.com" in n["From"]
         assert n["Message-ID"]
+        # Ohne Datum verwerfen Spamfilter die Mail, obwohl der Server sie annimmt
+        assert abs((datetime.now().astimezone() - n["Date"].datetime).total_seconds()) < 60
         test = ka.als_email(self._auszug(mitglieder["schulden"], -100), EINST, an="ich@example.net", betreff_zusatz="[TEST] ")
         assert test["To"] == "ich@example.net" and test["Subject"].startswith("[TEST] ")
 
@@ -306,6 +326,36 @@ class TestVersand:
         assert verbinder.gesendet[0]["Subject"].startswith("[TEST]")
         assert session.scalars(select(Mailversand)).all() == []
 
+    def test_protokoll_ueberlebt_abbruch_mittendrin(self, session, mitglieder):
+        """Bricht der Lauf nach der ersten Mail ab, bleibt deren Protokoll gespeichert –
+        sonst bekäme das Mitglied seinen Kontoauszug beim nächsten Lauf doppelt."""
+        class Absturz(Exception):
+            pass
+
+        def fortschritt(i, _auszug):
+            if i == 1:
+                raise Absturz
+            return True
+
+        verbinder = FalscherVerbinder()
+        with pytest.raises(Absturz):
+            ka.versenden(session, auszuege(session, mitglieder, "schulden", "guthaben", "null"),
+                         EINST, "x", verbinder, fortschritt)
+        session.rollback()  # das passiert, wenn die Transaktion nach einem Fehler verlassen wird
+
+        assert len(verbinder.gesendet) == 1 and verbinder.verbindung.beendet
+        assert ka.bereits_versendet(session, STICHTAG) == {mitglieder["schulden"].id}
+
+    def test_nicht_aufbaubare_mail_zaehlt_als_fehlgeschlagen(self, session, mitglieder):
+        """Eine unzulässige Adresse bricht den Lauf nicht ab und wird als Fehler protokolliert."""
+        mitglieder["guthaben"].email = "anna\n@example.org"
+        verbinder = FalscherVerbinder()
+        ergebnisse = ka.versenden(session, auszuege(session, mitglieder, "schulden", "guthaben", "null"),
+                                  EINST, "x", verbinder)
+        assert [e.erfolgreich for e in ergebnisse] == [True, False, True]
+        assert ergebnisse[1].fehler
+        assert len(verbinder.gesendet) == 2
+
     def test_letzter_versand(self, session, mitglieder):
         ka.versenden(session, auszuege(session, mitglieder, "schulden"), EINST, "x", FalscherVerbinder())
         assert ka.letzter_versand(session)[mitglieder["schulden"].id].stichtag == STICHTAG
@@ -321,6 +371,9 @@ class TestEchterSmtpServer:
         assert "Hallo Tommy," in text and "DE02120300000000202051" in text and "45,50 €" in text
         assert "Gut gewirtschaftet! 🍻" in null.get_content()  # Emoji und Umlaute korrekt
         assert "Max (Kassenwart)" in str(schulden["From"])
+        # Pflichtangaben, die beim Server ankommen müssen (RFC 5322)
+        for mail in (schulden, null):
+            assert mail["Date"] and mail["Message-ID"] and mail["From"]
 
     def test_falsches_passwort(self, smtp_server):
         smtp_server.passwort_ok = False
@@ -437,6 +490,8 @@ class TestEinstellungenDialog:
         ("iban", "12345", "IBAN"),
         ("betreff", "Stand {datum}", "Unbekannter Platzhalter"),
         ("betreff", "", "leer"),
+        ("betreff", "Stand {name.foo}", "Unbekannter Platzhalter"),
+        ("verwendungszweck", "Zweck {verwendungszweck}", "Verwendungszweck: Der Platzhalter"),
     ])
     def test_fehler(self, app, feld, wert, meldung):
         d = EinstellungenDialog(EINST)

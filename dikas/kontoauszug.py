@@ -5,8 +5,9 @@ import socket
 import ssl
 from dataclasses import dataclass
 from datetime import date
+from email.errors import MessageError
 from email.message import EmailMessage
-from email.utils import formataddr, make_msgid
+from email.utils import formataddr, localtime, make_msgid
 from typing import Callable, Protocol
 
 from sqlalchemy import select
@@ -53,6 +54,9 @@ def platzhalter(konto: Konto, saldo: int, stichtag: date, e: Einstellungen) -> d
         "bic": e.bic,
         "bank": e.bank,
         "absender": e.absender_name,
+        # Der Verwendungszweck kann sich nicht selbst enthalten. Die Einstellungen lehnen das
+        # ab; steht es in älteren Daten trotzdem drin, bleibt die Stelle leer statt abzustürzen.
+        "verwendungszweck": "",
     }
     werte["verwendungszweck"] = e.verwendungszweck.format_map(werte)
     return werte
@@ -103,6 +107,9 @@ def als_email(auszug: Kontoauszug, e: Einstellungen, an: str | None = None, betr
     nachricht["From"] = formataddr((e.absender_name, e.absender_email))
     nachricht["To"] = an or auszug.empfaenger
     nachricht["Subject"] = betreff_zusatz + auszug.betreff
+    # Pflicht laut RFC 5322. Python setzt das Datum nicht selbst; ohne nehmen Mailserver die
+    # Mail zwar an, Spamfilter verwerfen sie aber oft stillschweigend.
+    nachricht["Date"] = localtime()
     nachricht["Message-ID"] = make_msgid(domain=e.absender_email.split("@")[-1] or None)
     nachricht.set_content(auszug.text)
     return nachricht
@@ -111,7 +118,7 @@ def als_email(auszug: Kontoauszug, e: Einstellungen, an: str | None = None, betr
 # --- SMTP -----------------------------------------------------------------
 
 class Verbindung(Protocol):
-    def send_message(self, nachricht: EmailMessage) -> object: ...
+    def send_message(self, nachricht: EmailMessage, /) -> object: ...
     def quit(self) -> object: ...
 
 
@@ -178,6 +185,10 @@ def versenden(
     `fortschritt(i, auszug)` wird vor jeder Mail aufgerufen; gibt sie False zurück, wird abgebrochen.
     Scheitert eine einzelne Mail, geht es mit der nächsten weiter (bei Verbindungsabbruch
     wird einmal neu verbunden). Verbindungs-/Anmeldefehler am Anfang werfen VersandFehler.
+
+    Anders als sonst wird hier nach jeder Mail gespeichert (commit): Eine verschickte Mail lässt
+    sich nicht zurückholen. Bricht der Lauf mittendrin ab (Absturz, Stromausfall), wäre sonst
+    das ganze Protokoll weg und alle bekämen ihren Kontoauszug beim nächsten Lauf doppelt.
     """
     verbindung = verbinder(e, passwort)
     ergebnisse = []
@@ -192,14 +203,15 @@ def versenden(
                     verbindung = verbinder(e, passwort)
                     verbindung.send_message(als_email(auszug, e))
                 ergebnis = Ergebnis(auszug, True)
-            except (smtplib.SMTPException, OSError, VersandFehler) as fehler:
+            except (smtplib.SMTPException, OSError, VersandFehler, MessageError, ValueError) as fehler:
+                # MessageError/ValueError: Die Mail ließ sich gar nicht erst aufbauen (z. B. unzulässige Adresse)
                 ergebnis = Ergebnis(auszug, False, str(fehler)[:500])
             ergebnisse.append(ergebnis)
             session.add(Mailversand(
                 konto_id=auszug.konto.id, stichtag=auszug.stichtag, saldo_cent=auszug.saldo,
                 empfaenger=auszug.empfaenger, erfolgreich=ergebnis.erfolgreich, fehler=ergebnis.fehler,
             ))
-            session.flush()
+            session.commit()
     finally:
         _beenden(verbindung)
     return ergebnisse

@@ -293,7 +293,8 @@ class VersandDialog(QDialog):
 
         auszuege = [self._auszug(k, s) for k, s in auswahl]
         try:
-            with self.Session.begin() as session:
+            # Keine umschließende Transaktion: versenden() speichert das Protokoll nach jeder Mail
+            with self.Session() as session:
                 ergebnisse = ka.versenden(session, auszuege, self.einstellungen, passwort, self.verbinder, weiter)
         except ka.VersandFehler as fehler:
             self._passwort = None

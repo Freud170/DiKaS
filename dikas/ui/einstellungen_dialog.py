@@ -191,7 +191,8 @@ class EinstellungenDialog(QDialog):
                               ("Text Saldo 0", e.text_null)):
             if not vorlage:
                 return f"{name} darf nicht leer sein."
-            if meldung := es.pruefe_vorlage(vorlage):
+            gesperrt = ("verwendungszweck",) if name == "Verwendungszweck" else ()
+            if meldung := es.pruefe_vorlage(vorlage, gesperrt):
                 return f"{name}: {meldung}"
         return None
 
