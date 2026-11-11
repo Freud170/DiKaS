@@ -442,6 +442,95 @@ class TestVerbindungsarten:
         assert "starttls" not in protokoll
 
 
+# --- Umsätze als PDF -------------------------------------------------------
+
+class TestUmsaetze:
+    @pytest.fixture
+    def tom(self, verein):
+        kasse = verein.kasse("Beitragskasse")
+        tom = verein.mitglied("Tom Becker")
+        anna = verein.mitglied("Anna Schulz")
+        verein.einzahlung(tom, "20", "Altes Guthaben", datum=D(2025, 6, 1))
+        verein.beitrag(tom, kasse, "60", "Beitrag 2026", datum=D(2026, 1, 1))
+        falsch = verein.einzahlung(tom, "99", "Tippfehler", datum=D(2026, 2, 1))
+        bh.stornieren(verein.s, falsch.id, D(2026, 2, 2))
+        verein.umbuchung(anna, tom, "15", "Anna gibt Bier aus", datum=D(2026, 5, 1))
+        verein.einzahlung(anna, "500", "Fremdes Geld", datum=D(2026, 5, 2))  # nicht Toms Konto
+        verein.einzahlung(tom, "10", "Nach dem Stichtag", datum=D(2027, 1, 2))
+        return tom
+
+    def test_anfang_zeilen_ende(self, session, tom):
+        u = bh.umsaetze(session, tom.id, D(2026, 1, 1), D(2026, 12, 31))
+        assert u.anfang == ct(20)
+        texte = [z.buchung.text for z in u.zeilen]
+        assert texte[0] == "Beitrag 2026" and texte[-1] == "Anna gibt Bier aus"
+        assert "Fremdes Geld" not in texte and "Nach dem Stichtag" not in texte
+        assert [z.betrag for z in u.zeilen] == [ct(-60), ct(99), ct(-99), ct(15)]
+        assert [z.saldo for z in u.zeilen] == [ct(-40), ct(59), ct(-40), ct(-25)]
+        assert u.ende == ct(-25) == bh.salden(session, bis=D(2026, 12, 31))[tom.id]
+        assert u.zeilen[0].gegenkonto.name == "Beitragskasse"
+        assert u.zeilen[-1].gegenkonto.name == "Anna Schulz"
+
+    def test_ohne_buchungen(self, session, verein):
+        m = verein.mitglied("Neu Ling")
+        u = bh.umsaetze(session, m.id, D(2026, 1, 1), D(2026, 12, 31))
+        assert (u.anfang, u.zeilen, u.ende) == (0, [], 0)
+        assert "Keine Buchungen" in ka.umsaetze_html(u)
+
+    def test_zeitraum_falsch(self, session, tom):
+        with pytest.raises(bh.BuchhaltungsFehler):
+            bh.umsaetze(session, tom.id, D(2026, 12, 31), D(2026, 1, 1))
+
+    def test_html(self, session, tom):
+        html = ka.umsaetze_html(bh.umsaetze(session, tom.id, D(2026, 1, 1), D(2026, 6, 30)), "Max <Kassenwart>")
+        assert "Kontoauszug Tom Becker" in html and "01.01.2026 – 30.06.2026" in html
+        assert "Max &lt;Kassenwart&gt;" in html
+        assert "Kontostand am 01.01.2026" in html and "20,00 €" in html
+        assert "Kontostand am 30.06.2026" in html and "-25,00 €" in html
+        assert "Storno: Tippfehler" in html
+        assert "Fremdes Geld" not in html
+
+    @pytest.mark.parametrize("vorname, nachname, name", [
+        ("Tom", "Becker", "Kontoauszug_2026_Becker_Tom.pdf"),
+        ("Jörg", "von Müller", "Kontoauszug_2026_von_Müller_Jörg.pdf"),
+        ("", "", "Kontoauszug_2026_Mitglied.pdf"),
+    ])
+    def test_dateiname(self, vorname, nachname, name):
+        from dikas.db.models import Konto
+        konto = Konto(name=f"{vorname} {nachname}".strip(), vorname=vorname, nachname=nachname)
+        assert ka.pdf_dateiname(konto, STICHTAG) == name
+
+    def test_zeitraum_aus_stichtag(self):
+        assert ka.umsatz_zeitraum(D(2026, 8, 15)) == (D(2026, 1, 1), D(2026, 8, 15))
+
+    def test_mit_pdf_und_als_email(self, app, session, tom):
+        from PySide6.QtPdf import QPdfDocument
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        tom.email = "tom@example.org"
+        auszug = ka.mit_pdf(session, ka.erstelle_auszug(tom, ct(-25), STICHTAG, EINST), EINST)
+        assert auszug.pdf.dateiname == "Kontoauszug_2026_Becker_Tom.pdf"
+        puffer = QBuffer()
+        puffer.setData(QByteArray(auszug.pdf.inhalt))
+        puffer.open(QIODevice.ReadOnly)
+        dokument = QPdfDocument()
+        dokument.load(puffer)
+        assert dokument.status() == QPdfDocument.Status.Ready and dokument.pageCount() >= 1
+
+        mail = ka.als_email(auszug, EINST)
+        assert mail.get_body(("plain",)).get_content().startswith("Hallo Tom")
+        anhang = next(mail.iter_attachments())
+        assert anhang.get_filename() == "Kontoauszug_2026_Becker_Tom.pdf"
+        assert anhang.get_content() == auszug.pdf.inhalt
+
+    def test_pdf_kommt_beim_echten_server_an(self, app, session, tom, smtp_server):
+        tom.email = "tom@example.org"
+        auszug = ka.mit_pdf(session, ka.erstelle_auszug(tom, ct(-25), STICHTAG, EINST), EINST)
+        ergebnis = ka.versenden(session, [auszug], lokal(smtp_server), "geheim")
+        assert ergebnis[0].erfolgreich
+        anhang = next(smtp_server.mails[0].iter_attachments())
+        assert anhang.get_content() == auszug.pdf.inhalt
+
+
 # --- Oberfläche ------------------------------------------------------------
 
 @pytest.fixture
@@ -631,6 +720,46 @@ class TestVersandDialog:
         assert meldungen[-1] == ("warning", "Anmeldung fehlgeschlagen")
         d.senden()
         assert len(fragen) == 2  # falsches Passwort wird nicht gemerkt
+
+    def test_mails_haben_eigenes_pdf(self, dialog, verbinder):
+        dialog.senden()
+        for nachricht in verbinder.gesendet:
+            anhaenge = list(nachricht.iter_attachments())
+            assert len(anhaenge) == 1
+            assert anhaenge[0].get_content_type() == "application/pdf"
+            assert anhaenge[0].get_content().startswith(b"%PDF")
+        namen = sorted(next(n.iter_attachments()).get_filename() for n in verbinder.gesendet)
+        assert namen == ["Kontoauszug_2026_Becker_Tom.pdf", "Kontoauszug_2026_Schuldner_Ex.pdf",
+                         "Kontoauszug_2026_Schulz_Anna.pdf"]
+
+    def test_ohne_pdf(self, dialog, verbinder):
+        dialog.mit_pdf.setChecked(False)
+        dialog.senden()
+        assert all(list(n.iter_attachments()) == [] for n in verbinder.gesendet)
+
+    def test_testmail_mit_pdf(self, dialog, verbinder):
+        dialog.tabelle.selectRow(self.zeile(dialog, "Tom Becker"))
+        dialog.testmail()
+        assert next(verbinder.gesendet[0].iter_attachments()).get_filename() == "Kontoauszug_2026_Becker_Tom.pdf"
+
+    def test_vorschau_nennt_anhang(self, dialog):
+        dialog.tabelle.selectRow(self.zeile(dialog, "Tom Becker"))
+        assert "Anhang: Kontoauszug_2026_Becker_Tom.pdf (Umsätze 01.01. – 31.12.2026)" in dialog.vorschau.toPlainText()
+        dialog.mit_pdf.setChecked(False)
+        assert "Anhang" not in dialog.vorschau.toPlainText()
+        assert not dialog.pdf_knopf.isEnabled()
+
+    def test_pdf_ansehen(self, app, Sitzung, verbinder, meldungen, tmp_path, monkeypatch):
+        from dikas import anhaenge
+        monkeypatch.setattr(anhaenge, "ansichtsordner", lambda: tmp_path)
+        geoeffnet = []
+        d = VersandDialog(Sitzung, heute=STICHTAG, verbinder=verbinder, passwort_quelle=lambda *_: "x",
+                          oeffner=geoeffnet.append)
+        d.tabelle.selectRow(self.zeile(d, "Tom Becker"))
+        d.pdf_ansehen()
+        pfad = geoeffnet[0].toLocalFile()
+        assert pfad.endswith("Kontoauszug_2026_Becker_Tom.pdf")
+        assert (tmp_path / "Kontoauszug_2026_Becker_Tom.pdf").read_bytes().startswith(b"%PDF")
 
     def test_einstellungen_unvollstaendig(self, app, engine, meldungen):
         with Session(engine) as s, s.begin():

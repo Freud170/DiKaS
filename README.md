@@ -167,6 +167,13 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
 wird nach jeder einzelnen Mail gespeichert: Bricht ein Lauf mittendrin ab, bekommt beim
 nächsten Mal niemand seinen Kontoauszug doppelt.
 
+**Umsätze als PDF** (Häkchen oben, standardmäßig an): Jede Mail bekommt ein PDF
+`Kontoauszug_JJJJ_Nachname_Vorname.pdf` mit den Buchungen auf dem **eigenen** Privatkonto vom
+01.01. bis zum Stichtag: Kontostand am Anfang, jede Buchung mit Art, Text, Gegenkonto, Betrag und
+laufendem Kontostand, Kontostand am Ende. Die Konten anderer Mitglieder stehen nicht darin
+(nur als Gegenkonto bei einer Umbuchung). „PDF ansehen“ öffnet das PDF des markierten
+Mitglieds, die Testmail enthält es ebenfalls.
+
 **Einstellungen** (Schraubenschlüssel oben rechts):
 
 - *E-Mail-Konto*: Anbieter-Vorlagen für Gmail, GMX, web.de, T-Online, iCloud, IONOS, Strato
@@ -184,6 +191,30 @@ nächsten Mal niemand seinen Kontoauszug doppelt.
 passiert, sieht DiKaS nicht. Der Reihe nach prüfen: Spam-Ordner des Empfängers, Postfach der
 Absenderadresse (abgelehnte Mails kommen dort als „Mail delivery failed“ zurück) und ob
 Absender-E-Mail und Benutzername zum selben Postfach gehören.
+
+### Rechnungen an Buchungen
+
+Rechnungen und Belege als **PDF oder Foto** (JPG, PNG, GIF, BMP, WebP, TIFF) lassen sich an
+Buchungen hängen:
+
+- **Beim Buchen:** Im Dialog „Neue Buchung“ unter „Rechnungen“ auf „Datei …“ klicken oder
+  Dateien aus dem Explorer auf den Dialog ziehen.
+- **Nachträglich:** Buchung markieren → Knopf **„Rechnungen“** über der Buchungsliste (oder
+  Rechtsklick → „Rechnungen …“). Dort lassen sich Dateien anhängen (auch per Ziehen),
+  **öffnen** (Doppelklick, mit dem Standardprogramm), speichern und entfernen.
+- Buchungen mit Rechnung zeigen eine **Büroklammer** in der Spalte „Beleg“; der Tooltip nennt
+  die Dateinamen.
+
+Die Dateien liegen **in der Datenbank** (Tabelle `anhaenge`). Deshalb gehen sie bei
+Export/Import und in den Sicherungen automatisch mit. Damit die Datenbank nicht zu groß
+wird, werden Fotos über 2000 Pixel oder 800 KB beim Anhängen verkleinert (JPG, Qualität 80;
+ein Handyfoto hat danach meist 300–500 KB). PDFs bleiben unverändert (höchstens 20 MB).
+iPhone-Fotos im HEIC-Format gehen nicht, bitte als JPG speichern.
+
+Bei einer **Korrektur** mit Neubuchung wandern die Rechnungen zur neuen Buchung. Beim
+**Löschen** einer Buchung werden ihre Rechnungen mitgelöscht (die Sicherung davor enthält sie
+noch). An Stornobuchungen kann nichts angehängt werden. Zum Ansehen wird die Datei in den
+Temp-Ordner (`%TEMP%\DiKaS\ansicht`) entpackt, der beim nächsten Start geleert wird.
 
 ### Regeln
 
@@ -298,7 +329,8 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_beitrag_auswahl.py` | Status FM/EM, manuelle Auswahl im Beitragslauf, Doppelschutz |
 | `test_namen.py` | Vor-/Nachname: Pflicht, Aufteilen alter Namen, Sortierung, Anrede, Dialog |
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
-| `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Fehlerfälle, Dialoge |
+| `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Umsatz-PDF als Anhang, Fehlerfälle, Dialoge |
+| `test_anhaenge.py` | Rechnungen an Buchungen: Dateiprüfung, Fotos verkleinern, Korrektur/Löschen, Sicherung, Dialoge |
 | `test_datenaustausch.py` | Export/Import zwischen zwei PCs, Warnungen (älter, getrennt bearbeitet), Datenordner |
 | `test_sicherung.py` | Sicherung bei Start, nur bei Änderung, letzte 10, Wiederherstellen, Git-Ignorierung |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |
@@ -339,13 +371,15 @@ dikas/
   app.py            Programmstart
   buchhaltung.py    Fachlogik: Konten, Buchungsarten, Storno, Beitragslauf, Salden
   einstellungen.py  Einstellungen (Mailserver, Bankdaten, Textvorlagen), Anbieter-Vorlagen
-  kontoauszug.py    Kontoauszug-Mails erzeugen, per SMTP senden, Versand protokollieren
+  kontoauszug.py    Kontoauszug-Mails erzeugen (mit Umsatz-PDF), per SMTP senden, Versand protokollieren
+  anhaenge.py       Rechnungen (PDF/Fotos) an Buchungen: prüfen, verkleinern, speichern, ansehen
+  pdf.py            HTML als PDF (A4) über Qt, im Speicher
   sicherung.py      Automatische lokale Sicherung, letzte 10 Stände, Wiederherstellen
   datenaustausch.py Export/Import für die Weitergabe an andere PCs, Warnungen
   geld.py           Cent <-> "12,50 €"
   logo.py           Eigenes Vereinslogo einbauen (PNG + ICO erzeugen)
   db/
-    models.py       Tabellen (Konto, Statuswechsel, Buchung, Einstellung, Mailversand)
+    models.py       Tabellen (Konto, Statuswechsel, Buchung, Anhang, Einstellung, Mailversand)
     database.py     SQLite-Verbindung, DB-Pfad, Initialisierung
   ui/
     stil.py         Farben, Stylesheet, Symbole, deutsche Qt-Texte
@@ -354,6 +388,7 @@ dikas/
     auswertung.py   Auswertung über einen Zeitraum + PDF-Export
     einstellungen_dialog.py  Einstellungen bearbeiten
     versand_dialog.py        Kontoauszüge per E-Mail versenden
+    anhaenge_dialog.py       Rechnungen einer Buchung, Dateiauswahl im Buchungsdialog
     sicherungen_dialog.py    Sicherungen ansehen und wiederherstellen
     dialoge.py      Dialoge Konto, Buchung, Beitragslauf
 tests/              pytest-Tests

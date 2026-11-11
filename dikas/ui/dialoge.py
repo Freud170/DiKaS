@@ -25,10 +25,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dikas.anhaenge import Datei
 from dikas.buchhaltung import EMAIL_MUSTER, REGELN, BeitragVorschau
 from dikas.db.models import Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text, text_zu_cent
 from dikas.ui import stil
+from dikas.ui.anhaenge_dialog import AnhangAuswahl, gezogene_dateien
 from dikas.ui.bausteine import JahrAuswahl
 
 
@@ -297,6 +299,12 @@ class BuchungDialog(QDialog):
         self.form.addRow("Betrag (€):", self.betrag)
         self.form.addRow("Buchungstext:", self.text)
         self.form.addRow("Beleg-Nr.:", self.beleg)
+        # Rechnungen gleich mitspeichern (bei Korrekturen über „Rechnungen …“ an der Buchung)
+        self.rechnungen: AnhangAuswahl | None = None
+        if not vorlage:
+            self.rechnungen = AnhangAuswahl(self)
+            self.form.addRow("Rechnungen:", self.rechnungen)
+            self.setAcceptDrops(True)
         self.form.addRow(_knoepfe(self, self._pruefen))
 
         self.art.currentIndexChanged.connect(self._art_geaendert)
@@ -387,6 +395,18 @@ class BuchungDialog(QDialog):
             "text": self.text.text(),
             "beleg": self.beleg.text(),
         }
+
+    def dateien(self) -> list[Datei]:
+        """Die Rechnungen, die mit der neuen Buchung gespeichert werden sollen."""
+        return list(self.rechnungen.dateien) if self.rechnungen else []
+
+    def dragEnterEvent(self, ereignis):
+        if self.rechnungen and gezogene_dateien(ereignis):
+            ereignis.acceptProposedAction()
+
+    def dropEvent(self, ereignis):
+        if self.rechnungen:
+            self.rechnungen.dateien_dazu(gezogene_dateien(ereignis))
 
 
 class BeitragDialog(QDialog):

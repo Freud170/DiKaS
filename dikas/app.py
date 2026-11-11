@@ -6,7 +6,7 @@ import sys
 from PySide6.QtWidgets import QApplication
 from sqlalchemy.orm import sessionmaker
 
-from dikas import sicherung
+from dikas import anhaenge, sicherung
 from dikas.db import erstelle_engine, init_db, standard_db_pfad
 from dikas.ui import stil
 from dikas.ui.hauptfenster import Hauptfenster
@@ -31,6 +31,7 @@ def main() -> None:
         meldung = f"Sicherung fehlgeschlagen: {fehler}"
     engine = erstelle_engine(db_pfad)
     init_db(engine)
+    anhaenge.ansichten_aufraeumen()  # zum Ansehen ausgepackte Rechnungen vom letzten Mal
 
     fenster = Hauptfenster(sessionmaker(engine, expire_on_commit=False), str(db_pfad))
     fenster.show()

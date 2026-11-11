@@ -4,8 +4,8 @@ from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QMarginsF, QStandardPaths
-from PySide6.QtGui import QBrush, QColor, QFont, QPageLayout, QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtCore import QDate, QStandardPaths
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -28,6 +28,7 @@ from dikas import buchhaltung
 from dikas.buchhaltung import ArtSumme, KontoBewegung, sortierschluessel
 from dikas.db.models import Buchung, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
+from dikas.pdf import html_zu_pdf
 from dikas.ui import stil
 from dikas.ui.bausteine import GRAU, Kennzahl, betrag_zelle, fett_machen, zelle
 
@@ -170,15 +171,7 @@ def als_html(
 
 
 def speichere_pdf(html: str, pfad: str | Path, titel: str) -> None:
-    writer = QPdfWriter(str(pfad))
-    writer.setTitle(titel)
-    writer.setCreator("DiKaS")
-    writer.setPageSize(QPageSize(QPageSize.A4))
-    writer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout.Millimeter)
-    dokument = QTextDocument()
-    dokument.setDefaultFont(QFont("Segoe UI", 9))
-    dokument.setHtml(html)
-    dokument.print_(writer)
+    Path(pfad).write_bytes(html_zu_pdf(html, titel))
 
 
 class AuswertungDialog(QDialog):

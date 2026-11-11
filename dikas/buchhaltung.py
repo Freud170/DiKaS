@@ -8,7 +8,7 @@ Wirkung auf den Saldo siehe `dikas.db.models`.
 import re
 from collections.abc import Collection
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session, joinedload
@@ -561,6 +561,9 @@ def buchung_korrigieren(
     stornieren(session, original.id, original.datum)
     ersatz = buchen(session, art, konto_id, betrag_cent, text, datum, beleg, gegenkonto_id)
     ersatz.beitragsjahr = beitragsjahr
+    # Angehängte Rechnungen gehören zum tatsächlichen Vorgang, also zur gültigen Buchung
+    for anhang in list(original.anhaenge):
+        anhang.buchung = ersatz
     session.flush()
     return ersatz
 
@@ -839,6 +842,46 @@ def kontobewegungen(session: Session, von: date, bis: date) -> list[KontoBewegun
             abgang=minus_im.get(konto.id, 0),
         ))
     return ergebnis
+
+
+@dataclass(frozen=True)
+class Umsatz:
+    """Eine Buchung aus Sicht eines Kontos."""
+
+    buchung: Buchung
+    gegenkonto: Konto
+    betrag: int  # Wirkung auf den Saldo des Kontos (Cent, mit Vorzeichen)
+    saldo: int  # Saldo nach dieser Buchung
+
+
+@dataclass(frozen=True)
+class Umsaetze:
+    """Kontoauszug eines Kontos für einen Zeitraum."""
+
+    konto: Konto
+    von: date
+    bis: date
+    anfang: int  # Saldo vor dem Startdatum
+    zeilen: list[Umsatz]
+
+    @property
+    def ende(self) -> int:
+        return self.zeilen[-1].saldo if self.zeilen else self.anfang
+
+
+def umsaetze(session: Session, konto_id: int, von: date, bis: date) -> Umsaetze:
+    """Alle Buchungen eines Kontos im Zeitraum (älteste zuerst) mit laufendem Saldo."""
+    _pruefe_zeitraum(von, bis)
+    konto = _konto(session, konto_id)
+    anfang = sum(b.wirkung_auf(konto) for b in buchungen(session, konto_id, bis=von - timedelta(days=1)))
+    saldo = anfang
+    zeilen = []
+    for b in sorted(buchungen(session, konto_id, von, bis), key=lambda b: (b.datum, b.id)):
+        betrag = b.wirkung_auf(konto)
+        saldo += betrag
+        gegen = b.haben_konto if b.soll_konto_id == konto.id else b.soll_konto
+        zeilen.append(Umsatz(b, gegen, betrag, saldo))
+    return Umsaetze(konto, von, bis, anfang, zeilen)
 
 
 @dataclass(frozen=True)

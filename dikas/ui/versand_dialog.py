@@ -3,9 +3,11 @@
 from datetime import date
 from typing import Callable
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import QDate, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDateEdit,
     QDialog,
     QHBoxLayout,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy.orm import sessionmaker
 
+from dikas import anhaenge
 from dikas import einstellungen as es
 from dikas import kontoauszug as ka
 from dikas.db.models import Konto
@@ -50,11 +53,13 @@ class VersandDialog(QDialog):
         heute: date | None = None,
         verbinder: ka.Verbinder = ka.verbinden,
         passwort_quelle: Callable[[QDialog, es.Einstellungen], str | None] = passwort_abfragen,
+        oeffner: Callable[[QUrl], object] = QDesktopServices.openUrl,
     ):
         super().__init__(parent)
         self.Session = session_factory
         self.verbinder = verbinder
         self.passwort_quelle = passwort_quelle
+        self.oeffner = oeffner
         self._passwort: str | None = None
         self.setWindowTitle("Kontoauszüge per E-Mail")
         self.resize(1200, 720)
@@ -76,9 +81,19 @@ class VersandDialog(QDialog):
         keine.setAutoDefault(False)
         keine.clicked.connect(lambda: self._auswahl_setzen(False))
 
+        self.mit_pdf = QCheckBox("Umsätze als PDF anhängen")
+        self.mit_pdf.setChecked(True)
+        self.mit_pdf.setToolTip(
+            "Jedes Mitglied bekommt die Buchungen auf seinem Konto vom 01.01. bis zum Stichtag\n"
+            "als PDF (mit Anfangs- und Endstand) – nur das eigene Konto."
+        )
+        self.mit_pdf.toggled.connect(self._zeige_vorschau)
+
         oben = QHBoxLayout()
         oben.addWidget(QLabel("Kontostand zum:"))
         oben.addWidget(self.stichtag)
+        oben.addSpacing(16)
+        oben.addWidget(self.mit_pdf)
         oben.addSpacing(16)
         oben.addWidget(alle)
         oben.addWidget(keine)
@@ -106,6 +121,14 @@ class VersandDialog(QDialog):
         self.vorschau = QPlainTextEdit()
         self.vorschau.setReadOnly(True)
         rechts.layout_.addWidget(self.vorschau)
+        self.pdf_knopf = QPushButton(stil.symbol("DocumentPrintPreview"), "PDF ansehen")
+        self.pdf_knopf.setAutoDefault(False)
+        self.pdf_knopf.setToolTip("Das PDF für das ausgewählte Mitglied öffnen")
+        self.pdf_knopf.clicked.connect(self.pdf_ansehen)
+        pdf_zeile = QHBoxLayout()
+        pdf_zeile.addStretch()
+        pdf_zeile.addWidget(self.pdf_knopf)
+        rechts.layout_.addLayout(pdf_zeile)
 
         splitter = QSplitter()
         splitter.setChildrenCollapsible(False)
@@ -217,18 +240,46 @@ class VersandDialog(QDialog):
     def _auszug(self, konto: Konto, saldo: int) -> ka.Kontoauszug:
         return ka.erstelle_auszug(konto, saldo, self.stichtag_wert, self.einstellungen)
 
+    def _mit_pdf(self, auszuege: list[ka.Kontoauszug]) -> list[ka.Kontoauszug]:
+        """Hängt die Umsatz-PDFs an, wenn das Häkchen gesetzt ist."""
+        if not self.mit_pdf.isChecked():
+            return auszuege
+        with self.Session() as session:
+            return [ka.mit_pdf(session, a, self.einstellungen) for a in auszuege]
+
     def _gewaehlte_zeile(self) -> tuple[Konto, int] | None:
         zeilen = self.tabelle.selectionModel().selectedRows()
         return self.zeilen[zeilen[0].row()] if zeilen else None
 
-    def _zeige_vorschau(self):
+    def _zeige_vorschau(self, *_):
         auswahl = self._gewaehlte_zeile()
+        self.pdf_knopf.setEnabled(auswahl is not None and self.mit_pdf.isChecked())
         if auswahl is None:
             self.vorschau.clear()
             return
         a = self._auszug(*auswahl)
-        kopf = f"An: {a.empfaenger or '– keine E-Mail-Adresse –'}\nBetreff: {a.betreff}\n{'─' * 40}\n\n"
-        self.vorschau.setPlainText(kopf + a.text)
+        kopf = f"An: {a.empfaenger or '– keine E-Mail-Adresse –'}\nBetreff: {a.betreff}\n"
+        if self.mit_pdf.isChecked():
+            von, bis = ka.umsatz_zeitraum(self.stichtag_wert)
+            kopf += f"Anhang: {ka.pdf_dateiname(a.konto, a.stichtag)} (Umsätze {von:%d.%m.} – {bis:%d.%m.%Y})\n"
+        self.vorschau.setPlainText(kopf + f"{'─' * 40}\n\n" + a.text)
+
+    def pdf_ansehen(self):
+        auswahl = self._gewaehlte_zeile()
+        if auswahl is None:
+            return
+        auszug = self._mit_pdf([self._auszug(*auswahl)])[0]
+        if auszug.pdf is None:  # Häkchen „PDF anhängen“ ist aus
+            return
+        try:
+            ordner = anhaenge.ansichtsordner()
+            ordner.mkdir(parents=True, exist_ok=True)
+            pfad = ordner / auszug.pdf.dateiname
+            pfad.write_bytes(auszug.pdf.inhalt)
+        except OSError as fehler:
+            QMessageBox.warning(self, "Fehler", f"Das PDF konnte nicht erstellt werden:\n{fehler}")
+            return
+        self.oeffner(QUrl.fromLocalFile(str(pfad)))
 
     # --- Aktionen ---------------------------------------------------------
 
@@ -260,7 +311,8 @@ class VersandDialog(QDialog):
         if not self._bereit() or (passwort := self._passwort_holen()) is None:
             return
         try:
-            ka.testmail_senden(self._auszug(*auswahl), self.einstellungen, passwort, self.verbinder)
+            auszug = self._mit_pdf([self._auszug(*auswahl)])[0]
+            ka.testmail_senden(auszug, self.einstellungen, passwort, self.verbinder)
         except ka.VersandFehler as fehler:
             self._passwort = None
             QMessageBox.warning(self, "Testmail fehlgeschlagen", str(fehler))
@@ -291,7 +343,8 @@ class VersandDialog(QDialog):
             fortschritt.setLabelText(f"Sende an {auszug.konto.name} ({auszug.empfaenger}) …")
             return not fortschritt.wasCanceled()
 
-        auszuege = [self._auszug(k, s) for k, s in auswahl]
+        fortschritt.setLabelText("PDFs werden erstellt …")
+        auszuege = self._mit_pdf([self._auszug(k, s) for k, s in auswahl])
         try:
             # Keine umschließende Transaktion: versenden() speichert das Protokoll nach jeder Mail
             with self.Session() as session:

@@ -28,11 +28,12 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy.orm import sessionmaker
 
-from dikas import __version__, buchhaltung, datenaustausch, sicherung
+from dikas import __version__, anhaenge, buchhaltung, datenaustausch, sicherung
 from dikas.db import init_db
 from dikas.db.models import Buchung, Buchungsart, Konto, KontoTyp, MitgliedStatus
 from dikas.geld import cent_zu_text
 from dikas.ui import stil
+from dikas.ui.anhaenge_dialog import AnhaengeDialog
 from dikas.ui.auswertung import AuswertungDialog
 from dikas.ui.einstellungen_dialog import einstellungen_bearbeiten
 from dikas.ui.sicherungen_dialog import SicherungenDialog
@@ -188,6 +189,7 @@ class Hauptfenster(QMainWindow):
             ["Datum", "Art", "Beleg", "Text", "Soll", "Haben", "Betrag", "Status"], rechts=[6]
         )
         self.buchungen_breiten = Spaltenbreiten(self.buchungen_tabelle, verteilen_auf=3)  # Text
+        self._klammer = stil.symbol("MailAttachment")  # Buchung hat Rechnungen
 
         rechts = Panel("")
         self.buchungen_titel = rechts.titel
@@ -210,6 +212,8 @@ class Hauptfenster(QMainWindow):
             ("Korrigieren", "MailMessageNew", "Ausgewählte Buchung korrigieren (Doppelklick)",
              self.korrigiere_auswahl),
             ("Stornieren", "EditUndo", "Ausgewählte Buchung stornieren (Gegenbuchung)", self.storniere_auswahl),
+            ("Rechnungen", "MailAttachment", "Rechnungen (PDFs, Fotos) der Buchung ansehen und anhängen",
+             self.rechnungen_auswahl),
             ("Löschen", "EditDelete", "Ausgewählte Buchungen endgültig löschen (Entf)", self.loesche_auswahl),
             ("Alle anzeigen", None, "Auswahl aufheben und alle Buchungen anzeigen", self.zeige_alle_buchungen),
         ):
@@ -545,10 +549,14 @@ class Hauptfenster(QMainWindow):
             # Aus Sicht des gewählten Kontos: Wirkung auf dessen Saldo
             betrag = b.wirkung_auf(konto) if konto else b.betrag_cent
             status = "storniert" if b.ist_storniert else ""
+            beleg = _zelle(b.beleg)
+            if b.anhaenge:
+                beleg.setIcon(self._klammer)
+                beleg.setToolTip("Rechnungen: " + ", ".join(a.dateiname for a in b.anhaenge))
             werte = [
                 _zelle(b.datum.strftime("%d.%m.%Y"), daten=b.id),
                 _zelle(b.art.anzeige),
-                _zelle(b.beleg),
+                beleg,
                 _zelle(b.text),
                 _zelle(b.soll_konto.name),
                 _zelle(b.haben_konto.name),
@@ -753,8 +761,26 @@ class Hauptfenster(QMainWindow):
         dialog = BuchungDialog(konten, self)
         if dialog.exec() != BuchungDialog.Accepted:
             return
-        werte = dialog.werte()
-        self._ausfuehren(lambda s: buchhaltung.buchen(s, **werte))
+        werte, dateien = dialog.werte(), dialog.dateien()
+
+        def buchen_mit_rechnungen(session):
+            buchung = buchhaltung.buchen(session, **werte)
+            for datei in dateien:
+                anhaenge.anhaengen(session, buchung.id, datei)
+
+        self._ausfuehren(buchen_mit_rechnungen)
+
+    def rechnungen_auswahl(self):
+        ids = self._gewaehlte_buchung_ids()
+        if not ids:
+            return
+        if len(ids) > 1:
+            QMessageBox.information(self, "Hinweis", "Bitte genau eine Buchung auswählen.")
+            return
+        dialog = AnhaengeDialog(self.Session, ids[0], self)
+        dialog.exec()
+        if dialog.geaendert:
+            self.aktualisieren()
 
     def beitraege_abbuchen(self):
         with self.Session() as session:
@@ -782,6 +808,7 @@ class Hauptfenster(QMainWindow):
         menue = QMenu(self)
         menue.addAction(stil.symbol("MailMessageNew"), "Korrigieren …", self.korrigiere_auswahl)
         menue.addAction(stil.symbol("EditUndo"), "Stornieren", self.storniere_auswahl)
+        menue.addAction(stil.symbol("MailAttachment"), "Rechnungen …", self.rechnungen_auswahl)
         menue.addSeparator()
         menue.addAction(stil.symbol("EditDelete"), "Löschen …", self.loesche_auswahl)
         menue.exec(self.buchungen_tabelle.viewport().mapToGlobal(position))

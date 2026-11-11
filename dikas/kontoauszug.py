@@ -1,11 +1,13 @@
 """Jährlicher Kontoauszug per E-Mail: Mails erzeugen, per SMTP versenden, Versand protokollieren."""
 
+import re
 import smtplib
 import socket
 import ssl
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, replace
+from datetime import date, datetime
 from email.errors import MessageError
+from html import escape
 from email.message import EmailMessage
 from email.utils import formataddr, localtime, make_msgid
 from typing import Callable, Protocol
@@ -24,6 +26,12 @@ class VersandFehler(Exception):
 
 
 @dataclass(frozen=True)
+class PdfAnhang:
+    dateiname: str
+    inhalt: bytes
+
+
+@dataclass(frozen=True)
 class Kontoauszug:
     konto: Konto
     saldo: int  # Cent zum Stichtag
@@ -31,6 +39,7 @@ class Kontoauszug:
     empfaenger: str
     betreff: str
     text: str
+    pdf: PdfAnhang | None = None  # Umsätze des Jahres als PDF
 
     @property
     def art(self) -> str:
@@ -112,7 +121,78 @@ def als_email(auszug: Kontoauszug, e: Einstellungen, an: str | None = None, betr
     nachricht["Date"] = localtime()
     nachricht["Message-ID"] = make_msgid(domain=e.absender_email.split("@")[-1] or None)
     nachricht.set_content(auszug.text)
+    if auszug.pdf is not None:
+        nachricht.add_attachment(
+            auszug.pdf.inhalt, maintype="application", subtype="pdf", filename=auszug.pdf.dateiname
+        )
     return nachricht
+
+
+# --- Umsätze als PDF ------------------------------------------------------
+
+def umsatz_zeitraum(stichtag: date) -> tuple[date, date]:
+    """Vom 01.01. des Stichtagsjahres bis zum Stichtag."""
+    return date(stichtag.year, 1, 1), stichtag
+
+
+def pdf_dateiname(konto: Konto, stichtag: date) -> str:
+    name = "_".join(t for t in (konto.nachname, konto.vorname) if t) or konto.name
+    name = re.sub(r"[^\w-]+", "_", name).strip("_") or "Mitglied"
+    return f"Kontoauszug_{stichtag.year}_{name}.pdf"
+
+
+def umsaetze_html(u: buchhaltung.Umsaetze, verein: str = "") -> str:
+    """Kontoauszug eines Mitglieds als HTML (Grundlage für das PDF)."""
+    grau, rot = "#5f6b7a", "#b3261e"
+
+    def euro(cent: int, fett: bool = False) -> str:
+        stil = f"color:{rot};" if cent < 0 else ""
+        stil += "font-weight:bold;" if fett else ""
+        return f"<td align='right' nowrap style='{stil}'>{cent_zu_text(cent)}</td>"
+
+    teile = [
+        "<html><body style='font-family:Segoe UI; font-size:9pt'>",
+        f"<p style='color:{grau}; margin:0'>{escape(verein)}</p>" if verein else "",
+        f"<h2 style='margin:0'>Kontoauszug {escape(u.konto.name)}</h2>",
+        f"<p style='color:{grau}'>Zeitraum {u.von:%d.%m.%Y} – {u.bis:%d.%m.%Y} · "
+        f"erstellt am {datetime.now():%d.%m.%Y}</p>",
+        "<table width='100%' cellspacing='0' cellpadding='4' border='0'>",
+        f"<tr bgcolor='#e8f0fa' style='color:{grau}'><th align='left'>Datum</th><th align='left'>Art</th>"
+        "<th align='left'>Text</th><th align='left'>Gegenkonto</th>"
+        "<th align='right'>Betrag</th><th align='right'>Kontostand</th></tr>",
+        f"<tr bgcolor='#f3f5f8'><td colspan='5'><b>Kontostand am {u.von:%d.%m.%Y}</b></td>"
+        f"{euro(u.anfang, fett=True)}</tr>",
+    ]
+    for i, z in enumerate(u.zeilen):
+        b = z.buchung
+        hintergrund = " bgcolor='#f7f9fb'" if i % 2 else ""
+        text = escape(b.text) + (f" <span style='color:{grau}'>(Beleg {escape(b.beleg)})</span>" if b.beleg else "")
+        teile.append(
+            f"<tr{hintergrund}><td nowrap>{b.datum:%d.%m.%Y}</td><td nowrap>{b.art.anzeige}</td>"
+            f"<td>{text}</td><td>{escape(z.gegenkonto.name)}</td>{euro(z.betrag)}{euro(z.saldo)}</tr>"
+        )
+    if not u.zeilen:
+        teile.append(f"<tr><td colspan='6' style='color:{grau}'>Keine Buchungen in diesem Zeitraum.</td></tr>")
+    teile += [
+        f"<tr bgcolor='#f3f5f8'><td colspan='5'><b>Kontostand am {u.bis:%d.%m.%Y}</b></td>"
+        f"{euro(u.ende, fett=True)}</tr>",
+        "</table>",
+        f"<p style='color:{grau}'>Positiver Kontostand = Guthaben, negativer Kontostand = offener Betrag. "
+        "Stornierte Buchungen erscheinen mit ihrer Gegenbuchung (Storno) und heben sich auf.</p>",
+        "</body></html>",
+    ]
+    return "".join(teile)
+
+
+def mit_pdf(session: Session, auszug: Kontoauszug, e: Einstellungen) -> Kontoauszug:
+    """Der Auszug mit den Umsätzen vom 01.01. bis zum Stichtag als PDF-Anhang."""
+    from dikas.pdf import html_zu_pdf  # Qt erst hier laden: braucht eine laufende QApplication
+
+    von, bis = umsatz_zeitraum(auszug.stichtag)
+    u = buchhaltung.umsaetze(session, auszug.konto.id, von, bis)
+    html = umsaetze_html(u, e.absender_name)
+    inhalt = html_zu_pdf(html, f"Kontoauszug {auszug.konto.name} {bis.year}")
+    return replace(auszug, pdf=PdfAnhang(pdf_dateiname(auszug.konto, auszug.stichtag), inhalt))
 
 
 # --- SMTP -----------------------------------------------------------------

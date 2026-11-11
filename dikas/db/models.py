@@ -14,8 +14,8 @@ import enum
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import CheckConstraint, Enum, ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import CheckConstraint, Enum, ForeignKey, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, deferred, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
@@ -182,6 +182,15 @@ class Buchung(Base):
         remote_side=[id], back_populates="storniert_durch"
     )
     storniert_durch: Mapped[Optional["Buchung"]] = relationship(back_populates="storno_von")
+    # Angehängte Rechnungen (Bilder/PDFs). Wird mitgeladen (ohne Dateiinhalt), damit die
+    # Buchungsliste auch nach Schließen der Session zeigen kann, ob etwas angehängt ist.
+    anhaenge: Mapped[list["Anhang"]] = relationship(
+        back_populates="buchung",
+        order_by="Anhang.id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
 
     @property
     def ist_storniert(self) -> bool:
@@ -207,6 +216,29 @@ class Buchung(Base):
             f"<Buchung {self.id} {self.datum} {self.art} {self.betrag_cent}ct "
             f"S{self.soll_konto_id}/H{self.haben_konto_id}>"
         )
+
+
+class Anhang(Base):
+    """Rechnung oder Beleg als Datei (Bild oder PDF) an einer Buchung.
+
+    Der Inhalt liegt in der Datenbank, damit Export/Import und Sicherungen ihn automatisch
+    mitnehmen. Er wird erst geladen, wenn er gebraucht wird (deferred).
+    """
+
+    __tablename__ = "anhaenge"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    buchung_id: Mapped[int] = mapped_column(ForeignKey("buchungen.id", ondelete="CASCADE"), index=True)
+    dateiname: Mapped[str] = mapped_column(String(255))
+    mime_typ: Mapped[str] = mapped_column(String(50))
+    groesse: Mapped[int]  # Bytes
+    inhalt: Mapped[bytes] = deferred(mapped_column(LargeBinary))
+    erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
+
+    buchung: Mapped[Buchung] = relationship(back_populates="anhaenge")
+
+    def __repr__(self) -> str:
+        return f"<Anhang {self.id} {self.dateiname!r} an Buchung {self.buchung_id}>"
 
 
 class Einstellung(Base):
