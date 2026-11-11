@@ -564,6 +564,7 @@ def buchung_korrigieren(
     # Angehängte Rechnungen gehören zum tatsächlichen Vorgang, also zur gültigen Buchung
     for anhang in list(original.anhaenge):
         anhang.buchung = ersatz
+    ersatz.rechnung_noetig = original.rechnung_noetig
     session.flush()
     return ersatz
 
@@ -622,6 +623,58 @@ def buchung_passt(buchung: Buchung, suchtext: str) -> bool:
         zahl = suchtext.replace("€", "").strip()
         return re.search(rf"(?<![\d.,]){re.escape(zahl)}(?![\d])", heuhaufen) is not None
     return all(wort in heuhaufen for wort in sortierform(suchtext).split())
+
+
+# --- Rechnungen -----------------------------------------------------------
+
+def rechnung_standard(buchung: Buchung) -> bool:
+    """Braucht eine Buchung dieser Art normalerweise eine Rechnung?
+
+    Ja bei Kassen-Ausgaben und bei Umbuchungen von einer Kasse an ein Mitglied (erstattete
+    Auslagen). Nein bei Beiträgen, Ein-/Auszahlungen, Geldtransfers, Kassen-Einnahmen und
+    allen anderen Umbuchungen.
+    """
+    if buchung.art == Buchungsart.KASSE_AUSGABE:
+        return True
+    if buchung.art == Buchungsart.UMBUCHUNG:
+        # Umbuchung: „Von“ steht im Soll, „Nach“ im Haben
+        return buchung.soll_konto.typ == KontoTyp.KASSE and buchung.haben_konto.typ == KontoTyp.PRIVAT
+    return False
+
+
+def braucht_rechnung(buchung: Buchung) -> bool:
+    """Standard nach Buchungsart, außer es wurde für diese Buchung von Hand festgelegt.
+    Stornierte Buchungen und Stornos brauchen nie eine."""
+    if buchung.ist_storno or buchung.ist_storniert:
+        return False
+    if buchung.rechnung_noetig is not None:
+        return buchung.rechnung_noetig
+    return rechnung_standard(buchung)
+
+
+def rechnung_fehlt(buchung: Buchung) -> bool:
+    return braucht_rechnung(buchung) and not buchung.anhaenge
+
+
+def rechnung_noetig_setzen(session: Session, buchung_ids: Collection[int], noetig: bool | None) -> int:
+    """Legt für Buchungen fest, ob sie eine Rechnung brauchen (None = wieder nach Buchungsart).
+
+    Entspricht der Wert dem Standard der Buchungsart, wird keine Ausnahme gespeichert.
+    Stornobuchungen werden übersprungen. Rückgabe: Anzahl geänderter Buchungen.
+    """
+    geaendert = 0
+    for buchung_id in buchung_ids:
+        b = session.get(Buchung, buchung_id)
+        if b is None:
+            raise BuchhaltungsFehler(f"Buchung {buchung_id} existiert nicht.")
+        if b.ist_storno:
+            continue
+        wert = None if noetig is None or noetig == rechnung_standard(b) else noetig
+        if b.rechnung_noetig != wert:
+            b.rechnung_noetig = wert
+            geaendert += 1
+    session.flush()
+    return geaendert
 
 
 # --- Beiträge -------------------------------------------------------------

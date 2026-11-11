@@ -209,6 +209,19 @@ Buchungen hängen:
 - Buchungen mit Rechnung zeigen eine **Büroklammer** in der Spalte „Beleg“; der Tooltip nennt
   die Dateinamen.
 
+**Welche Buchungen brauchen eine Rechnung?** Standardmäßig **Kassen-Ausgaben** und
+**Umbuchungen von einer Kasse an ein Mitglied** (erstattete Auslagen). Beiträge, Ein- und
+Auszahlungen, Geldtransfers, Kassen-Einnahmen und alle übrigen Umbuchungen brauchen keine;
+stornierte Buchungen und Stornos nie. Ausnahmen per Rechtsklick → „Rechnung nötig?“ →
+„Braucht keine Rechnung“ / „Braucht eine Rechnung“ / „Wie Buchungsart (Standard)“ (geht auch
+für mehrere markierte Buchungen). Die Ausnahme bleibt bei einer Korrektur erhalten.
+
+Der Knopf **„Ohne Rechnung (n)“** über der Buchungsliste zeigt nur die Buchungen, denen noch
+eine Rechnung fehlt (n = Anzahl in der aktuellen Ansicht). Beim Einschalten werden alle Konten
+durchsucht; ein Klick auf ein Konto grenzt weiter ein, die Suche funktioniert auch.
+„Alle anzeigen“ schaltet den Filter wieder aus. In der Spalte „Status“ steht bei solchen
+Buchungen „Rechnung fehlt“.
+
 Die Dateien liegen **in der Datenbank** (Tabelle `anhaenge`). Deshalb gehen sie bei
 Export/Import und in den Sicherungen automatisch mit. Damit die Datenbank nicht zu groß
 wird, werden Fotos über 2000 Pixel oder 800 KB beim Anhängen verkleinert (JPG, Qualität 80;
@@ -335,6 +348,7 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 | `test_kontakt.py` | Bierspitz und E-Mail: Prüfung, Dialog, Suche, DB-Update |
 | `test_kontoauszug.py` | Einstellungen, Mailtexte, Versand (inkl. Test-SMTP-Server im Test), Umsatz-PDF als Anhang, Fehlerfälle, Dialoge |
 | `test_anhaenge.py` | Rechnungen an Buchungen: Dateiprüfung, Fotos verkleinern, Korrektur/Löschen, Sicherung, Dialoge |
+| `test_rechnung_noetig.py` | Welche Buchungen eine Rechnung brauchen, Ausnahmen, Filter „Ohne Rechnung“, DB-Update |
 | `test_datenaustausch.py` | Export/Import zwischen zwei PCs, Warnungen (älter, getrennt bearbeitet), Datenordner |
 | `test_sicherung.py` | Sicherung bei Start, nur bei Änderung, letzte 10, Wiederherstellen, Git-Ignorierung |
 | `test_auswertung.py` | Kontobewegungen im Zeitraum, Summen je Art, Zeitraum-Vorlagen, PDF, Dialog |

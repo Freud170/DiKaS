@@ -95,7 +95,7 @@ NACHTRAEGLICHE_SPALTEN = {
         "bierspitz": "VARCHAR(100) NOT NULL DEFAULT ''",
         "email": "VARCHAR(200) NOT NULL DEFAULT ''",
     },
-    "buchungen": {"beitragsjahr": "INTEGER"},
+    "buchungen": {"beitragsjahr": "INTEGER", "rechnung_noetig": "BOOLEAN"},
 }
 
 

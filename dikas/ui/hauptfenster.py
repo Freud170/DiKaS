@@ -226,6 +226,17 @@ class Hauptfenster(QMainWindow):
             knopf.clicked.connect(slot)
             if text == "Alle anzeigen":
                 aktionen.addStretch()
+                # Filter: nur Buchungen, die eine Rechnung brauchen, aber noch keine haben
+                self.ohne_rechnung = QToolButton()
+                self.ohne_rechnung.setCheckable(True)
+                self.ohne_rechnung.setIcon(stil.symbol("MailAttachment"))
+                self.ohne_rechnung.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+                self.ohne_rechnung.setToolTip(
+                    "Nur Buchungen zeigen, die eine Rechnung brauchen, aber noch keine haben\n"
+                    "(Kassen-Ausgaben und Umbuchungen Kasse → Mitglied; Ausnahmen per Rechtsklick)"
+                )
+                self.ohne_rechnung.toggled.connect(self._ohne_rechnung_umgeschaltet)
+                aktionen.addWidget(self.ohne_rechnung)
             aktionen.addWidget(knopf)
         rechts.layout_.addLayout(aktionen)
         self.buchungen_tabelle.itemDoubleClicked.connect(self.korrigiere_auswahl)
@@ -535,20 +546,25 @@ class Hauptfenster(QMainWindow):
         alle = self._buchungen[1]
         konto = next((k for k in self._konten if k.id == konto_id), None)
         suchtext = self.buchungssuche.text()
-        liste = [b for b in alle if buchhaltung.buchung_passt(b, suchtext)]
-        anzahl = f"{len(liste)} von {len(alle)} Buchungen" if suchtext.strip() else f"{len(alle)} Buchungen"
+        fehlend = [b for b in alle if buchhaltung.rechnung_fehlt(b)]
+        fehlend_ids = {b.id for b in fehlend}
+        self.ohne_rechnung.setText(f"Ohne Rechnung ({len(fehlend)})")
+        nur_fehlend = self.ohne_rechnung.isChecked()
+        basis = fehlend if nur_fehlend else alle
+        liste = [b for b in basis if buchhaltung.buchung_passt(b, suchtext)]
+        anzahl = f"{len(liste)} von {len(alle)} Buchungen" if len(liste) != len(alle) else f"{len(alle)} Buchungen"
+        titel = f"Buchungen – {konto.name}" if konto else "Alle Buchungen"
+        self.buchungen_titel.setText(titel + (" ohne Rechnung" if nur_fehlend else ""))
         if konto:
-            self.buchungen_titel.setText(f"Buchungen – {konto.name}")
             saldo = self._salden.get(konto.id, 0)
             self.buchungen_info.setText(f"{anzahl} · Saldo <b>{cent_zu_text(saldo)}</b>")
         else:
-            self.buchungen_titel.setText("Alle Buchungen")
             self.buchungen_info.setText(anzahl)
         self.buchungen_tabelle.setRowCount(len(liste))
         for zeile, b in enumerate(liste):
             # Aus Sicht des gewählten Kontos: Wirkung auf dessen Saldo
             betrag = b.wirkung_auf(konto) if konto else b.betrag_cent
-            status = "storniert" if b.ist_storniert else ""
+            status = "storniert" if b.ist_storniert else "Rechnung fehlt" if b.id in fehlend_ids else ""
             beleg = _zelle(b.beleg)
             if b.anhaenge:
                 beleg.setIcon(self._klammer)
@@ -572,7 +588,25 @@ class Hauptfenster(QMainWindow):
     # --- Aktionen ---------------------------------------------------------
 
     def zeige_alle_buchungen(self):
+        self.ohne_rechnung.setChecked(False)
         self.konten_tabelle.clearSelection()
+        self.lade_buchungen()
+
+    def _ohne_rechnung_umgeschaltet(self, an: bool):
+        """Beim Einschalten über alle Konten suchen; ein Konto lässt sich danach wieder wählen."""
+        if an and self.konten_tabelle.selectionModel().hasSelection():
+            self.konten_tabelle.clearSelection()  # lädt die Liste über das Auswahlsignal neu
+        self.lade_buchungen()
+
+    def rechnung_noetig_setzen(self, noetig: bool | None):
+        """Für die markierten Buchungen festlegen, ob sie eine Rechnung brauchen (None = nach Art)."""
+        ids = self._gewaehlte_buchung_ids()
+        if not ids:
+            return
+        if self._ausfuehren(lambda s: buchhaltung.rechnung_noetig_setzen(s, ids, noetig)):
+            text = {True: "braucht eine Rechnung", False: "braucht keine Rechnung",
+                    None: "richtet sich wieder nach der Buchungsart"}[noetig]
+            self.statusBar().showMessage(f"{len(ids)} Buchung(en): {text}.", 5000)
 
     def auswertung(self):
         AuswertungDialog(self.Session, self).exec()
@@ -809,6 +843,10 @@ class Hauptfenster(QMainWindow):
         menue.addAction(stil.symbol("MailMessageNew"), "Korrigieren …", self.korrigiere_auswahl)
         menue.addAction(stil.symbol("EditUndo"), "Stornieren", self.storniere_auswahl)
         menue.addAction(stil.symbol("MailAttachment"), "Rechnungen …", self.rechnungen_auswahl)
+        rechnung = menue.addMenu("Rechnung nötig?")
+        for text, wert in (("Braucht keine Rechnung", False), ("Braucht eine Rechnung", True),
+                           ("Wie Buchungsart (Standard)", None)):
+            rechnung.addAction(text, lambda w=wert: self.rechnung_noetig_setzen(w))
         menue.addSeparator()
         menue.addAction(stil.symbol("EditDelete"), "Löschen …", self.loesche_auswahl)
         menue.exec(self.buchungen_tabelle.viewport().mapToGlobal(position))

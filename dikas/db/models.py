@@ -171,6 +171,9 @@ class Buchung(Base):
     erstellt_am: Mapped[datetime] = mapped_column(default=datetime.now)
     # Bei Beiträgen aus dem Beitragslauf: für welches Jahr (verhindert doppelte Abbuchung)
     beitragsjahr: Mapped[Optional[int]] = mapped_column(default=None)
+    # Braucht diese Buchung eine Rechnung? None = Standard nach Buchungsart
+    # (siehe buchhaltung.braucht_rechnung), True/False = von Hand festgelegt
+    rechnung_noetig: Mapped[Optional[bool]] = mapped_column(default=None)
     # Gesetzt, wenn diese Buchung die Stornobuchung einer anderen ist
     storno_von_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("buchungen.id"), unique=True, default=None
