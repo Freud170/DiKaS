@@ -163,7 +163,9 @@ zu diesem Tag per Mail.
 Ablauf: Empfänger prüfen (Vorauswahl: mit E-Mail, aktiv oder mit offenem Saldo, für diesen
 Stichtag noch nicht versendet) → Vorschau ansehen → **Testmail an mich** → senden. Jeder
 Versand wird protokolliert („Zuletzt versendet“); wer für den Stichtag schon eine Mail hat,
-ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt.
+ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt. Das Protokoll
+wird nach jeder einzelnen Mail gespeichert: Bricht ein Lauf mittendrin ab, bekommt beim
+nächsten Mal niemand seinen Kontoauszug doppelt.
 
 **Einstellungen** (Schraubenschlüssel oben rechts):
 
@@ -171,15 +173,23 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
   oder eigener Server (SMTP-Server, Port, STARTTLS/SSL). Das **Passwort wird nicht
   gespeichert**, sondern beim Versand abgefragt. Gmail braucht ein **App-Passwort**
   (Google-Konto → Sicherheit → Bestätigung in zwei Schritten → App-Passwörter).
+  Bei Strato ist der Benutzername die vollständige Postfach-Adresse, und die Absender-E-Mail
+  sollte dieselbe Adresse sein.
 - *Bankdaten*: Kontoinhaber, IBAN, BIC, Bank
 - *Texte*: Betreff, Verwendungszweck und die drei Mailtexte mit Platzhaltern wie
   `{anrede}` (Bierspitz, sonst Vorname), `{vorname}`, `{nachname}`, `{saldo}`, `{betrag}`,
   `{stichtag}`, `{iban}` …
 
+**Mail kommt nicht an?** „Gesendet“ heißt: Der Mailserver hat die Mail angenommen. Was danach
+passiert, sieht DiKaS nicht. Der Reihe nach prüfen: Spam-Ordner des Empfängers, Postfach der
+Absenderadresse (abgelehnte Mails kommen dort als „Mail delivery failed“ zurück) und ob
+Absender-E-Mail und Benutzername zum selben Postfach gehören.
+
 ### Regeln
 
 - Salden werden nie gespeichert, sondern aus den Buchungen berechnet.
-- Beträge werden in Cent (Ganzzahl) gespeichert.
+- Beträge werden in Cent (Ganzzahl) gespeichert. Eingabe als `12,50`, `12.50` oder mit
+  Tausenderpunkt wie in der Anzeige: `1.000` sind eintausend Euro, `1.000,50` ebenso gültig.
 - Buchhalterisch sauber ist **Stornieren** (automatische Gegenbuchung).
 - **Löschen** (Knopf an der Buchungsliste, Entf-Taste oder Rechtsklick; mehrere per
   Strg/Umschalt markierbar) entfernt Buchungen endgültig – für eine übersichtliche Liste.
@@ -192,10 +202,11 @@ ist beim nächsten Öffnen abgewählt. Fehlgeschlagene Mails bleiben ausgewählt
   Rechtsklick): Dialog mit allen Werten vorbefüllt. Reine Text-/Beleg-Änderungen werden direkt
   übernommen; ändern sich Betrag, Konten, Art oder Datum, wird die alte Buchung (mit ihrem
   Datum) storniert und eine neue angelegt. Ein Beitragsjahr bleibt dabei erhalten.
+  Bei Buchungen deaktivierter Konten lassen sich nur Text und Beleg korrigieren.
 - **Deaktivieren** (Konto bearbeiten): z. B. ausgetreten, aber noch sichtbar, keine neuen Buchungen.
   Ein Geldort lässt sich nur bei Saldo 0 deaktivieren, und mindestens einer bleibt aktiv.
 - **Löschen** geht nur bei Privatkonten mit **Saldo 0**:
-  - ohne Buchungen → Konto wird wirklich entfernt
+  - ohne Buchungen → Konto wird wirklich entfernt (samt Einträgen im Versandprotokoll)
   - mit Buchungen → Konto wird als gelöscht markiert und ausgeblendet; die Buchungen
     bleiben in der Historie. Über den Filter „Gelöschte“ + „Wiederherstellen“ zurückholbar.
   - Buchungen eines gelöschten Kontos können erst nach dem Wiederherstellen storniert werden.
@@ -300,6 +311,27 @@ Versionen werden beim Start automatisch ergänzt (`NACHTRAEGLICHE_SPALTEN` in
 `tests/conftest.py` enthält die Hilfsklasse `Verein`, mit der sich Abläufe lesbar in Euro
 schreiben lassen (`verein.einzahlung(tom, "12,50")`).
 
+## Code prüfen
+
+Vor einem Commit alle Prüfungen in einem Lauf (Rückgabewert 0 = alles in Ordnung):
+
+```powershell
+.\werkzeuge\pruefen.ps1            # ruff, ty, Tests mit Abdeckung
+.\werkzeuge\pruefen.ps1 -OhneTests # nur ruff und ty (wenige Sekunden)
+.\werkzeuge\pruefen.ps1 -Audit     # zusätzlich pip-audit (braucht Internet)
+```
+
+| Werkzeug | Prüft | Einstellung in `pyproject.toml` |
+|---|---|---|
+| [ruff](https://docs.astral.sh/ruff/) | unbenutzte Importe/Variablen, typische Fehlerquellen, Sicherheitsregeln | `[tool.ruff]` |
+| [ty](https://docs.astral.sh/ty/) | Typen: Fehler in der Fachlogik brechen ab, in `dikas/ui` sind es nur Warnungen (Qt-Typangaben sind lückenhaft) | `[tool.ty]` |
+| pytest-cov | Tests und Testabdeckung, mindestens 90 % (Wert in `pruefen.ps1`) | `[tool.coverage]` |
+| pip-audit | bekannte Sicherheitslücken in den installierten Paketen | – |
+
+Die Regeln sind bewusst auf echte Fehler statt Stilfragen ausgewählt; der Code wird nicht
+automatisch umformatiert. Auf GitHub laufen dieselben Prüfungen bei jedem Push
+(`.github/workflows/pruefen.yml`).
+
 ## Projektstruktur
 
 ```
@@ -330,6 +362,10 @@ packaging/
   dikas.iss         Inno-Setup-Skript (Installation ohne Adminrechte)
   start_dikas.py    Startpunkt für die .exe
   symbol_erzeugen.py, dikas.ico, dikas.png   Programmsymbol
+werkzeuge/
+  pruefen.ps1       Code prüfen: ruff, ty, Tests mit Abdeckung, optional pip-audit
+.github/workflows/
+  pruefen.yml       Dieselben Prüfungen bei jedem Push auf GitHub
 ```
 
 ## Geplant

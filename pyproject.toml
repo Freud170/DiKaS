@@ -13,7 +13,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9", "pyinstaller>=6.22"]
+dev = [
+    "pytest>=9",
+    "pytest-cov>=7",
+    "pyinstaller>=6.22",
+    # Prüfwerkzeuge, siehe werkzeuge/pruefen.ps1
+    "ruff>=0.17",
+    "ty>=0.0.100",
+    "pip-audit>=2.10",
+]
 
 [project.gui-scripts]
 dikas = "dikas.app:main"
@@ -26,3 +34,71 @@ include = ["dikas*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# --- Prüfwerkzeuge (Aufruf: .\werkzeuge\pruefen.ps1) -----------------------
+
+[tool.ruff]
+line-length = 120
+target-version = "py315"
+
+[tool.ruff.lint]
+# Auswahl mit Blick auf echte Fehler statt Stilfragen: Der bestehende Code soll nicht
+# umformatiert werden, neue Fehler sollen aber auffallen.
+select = [
+    "E",    # pycodestyle
+    "W",    # pycodestyle (Warnungen)
+    "F",    # Pyflakes: unbenutzte Importe/Variablen, undefinierte Namen
+    "B",    # flake8-bugbear: typische Fehlerquellen
+    "S",    # flake8-bandit: Sicherheit
+    "BLE",  # kein pauschales "except Exception"
+    "PLE",  # Pylint: Fehler
+    "PLW",  # Pylint: Warnungen
+    "PERF", # Perflint
+    "T20",  # vergessene print()-Aufrufe
+    "RUF",  # Ruff-eigene Regeln
+]
+ignore = [
+    # Deutsche Texte mit „Anführungszeichen“ und Gedankenstrichen sind gewollt
+    "RUF001", "RUF002", "RUF003",
+    "E501",  # einzelne Zeilen knapp über 120 Zeichen sind in Ordnung
+    "B905",  # zip() ohne strict=: die Listen sind hier immer gleich lang
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: assert gehört dazu, Zufallszahlen und Hilfsprozesse sind dort unkritisch
+"tests/**/*.py" = [
+    "S101", "S311", "S603", "S607", "PLW1510", "B008", "B023", "E701", "RUF012",
+    "F841", "RUF059",  # Konten werden in Tests oft nur angelegt, ohne die Variable zu nutzen
+]
+# Kommandozeilenwerkzeuge dürfen auf die Konsole schreiben
+"dikas/logo.py" = ["T201"]
+"packaging/*.py" = ["T201"]
+
+[tool.ty.environment]
+python = "./.venv"
+
+[tool.ty.src]
+include = ["dikas"]
+
+# PySide6 erlaubt Kurzformen wie Qt.AlignRight (statt Qt.AlignmentFlag.AlignRight), die in
+# den Typinformationen fehlen. In der Oberfläche wären das über 100 Fehlalarme.
+[[tool.ty.overrides]]
+include = ["dikas/ui/**", "dikas/logo.py"]
+
+[tool.ty.overrides.rules]
+missing-attribute = "ignore"
+# Qt liefert z. B. bei tabelle.item(...) laut Typangabe auch None – in der Oberfläche nur
+# als Warnung anzeigen. In der Fachlogik (alles außerhalb von ui/) bleiben es Fehler.
+missing-union-attribute = "warn"
+invalid-argument-type = "warn"
+invalid-parameter-default = "warn"
+invalid-return-type = "warn"
+unsupported-operator = "warn"
+no-matching-overload = "warn"
+
+[tool.coverage.run]
+source = ["dikas"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

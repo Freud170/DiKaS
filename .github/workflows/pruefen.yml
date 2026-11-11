@@ -1,0 +1,35 @@
+# Führt bei jedem Push dieselben Prüfungen aus wie lokal .\werkzeuge\pruefen.ps1 -Audit
+name: Prüfen
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pruefen:
+    name: Lint, Typen, Tests, Abhängigkeiten
+    # Windows, weil DiKaS ein Windows-Programm ist (Pfade, Installer, Qt)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Python einrichten
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.15"
+          cache: pip
+
+      - name: Umgebung einrichten
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+      - name: Prüfen
+        shell: pwsh
+        run: .\werkzeuge\pruefen.ps1 -Audit
